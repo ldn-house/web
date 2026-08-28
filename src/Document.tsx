@@ -1,10 +1,7 @@
 import { HydrationScript, type JSX } from '@solidjs/web';
 import './app.css';
 
-/**
- * Document shell for generated entries. Start mode injects the hashed client
- * entry and stylesheet links into <head> from the build manifest.
- */
+/** Start mode injects the hashed entry and stylesheet links into <head>. */
 export default function Document(props: { children: JSX.Element }) {
   return (
     <html lang="en-GB">

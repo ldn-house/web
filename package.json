@@ -11,23 +11,31 @@
     "typecheck": "tsc --noEmit",
     "lint": "biome check",
     "lint:fix": "biome check --write",
-    "test": "bun test",
-    "cf-typegen": "wrangler types"
+    "test": "vitest run",
+    "cf-typegen": "wrangler types",
+    "db:generate": "drizzle-kit generate",
+    "db:migrate:local": "CI=true wrangler d1 migrations apply ldn-house --local",
+    "db:migrate:remote": "wrangler d1 migrations apply ldn-house --remote",
+    "test:watch": "vitest"
   },
   "dependencies": {
     "@solidjs/web": "^2.0.0-rc.3",
+    "drizzle-orm": "^0.45.2",
     "hono": "^4.13.5",
     "solid-js": "^2.0.0-rc.3"
   },
   "devDependencies": {
     "@biomejs/biome": "^2.5.11",
     "@cloudflare/vite-plugin": "^1.54.1",
+    "@cloudflare/vitest-plugin": "^1.1.2",
     "@solidjs/vite-plugin": "^3.0.0-next.34",
     "@tailwindcss/vite": "^4.3.3",
-    "@types/bun": "^1.4.0",
+    "drizzle-kit": "^0.31.10",
+    "json5": "^2.2.3",
     "tailwindcss": "^4",
     "typescript": "^7.0.2",
     "vite": "^8",
+    "vitest": "^4.1.0",
     "wrangler": "^4.127.0"
   }
 }

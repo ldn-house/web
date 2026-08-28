@@ -8,7 +8,25 @@
     "directory": "./dist/client",
     "binding": "ASSETS"
   },
-  "routes": [{ "pattern": "preview.ldn.house", "custom_domain": true }],
+  "routes": [
+    {
+      "pattern": "preview.ldn.house",
+      "custom_domain": true
+    }
+  ],
+  "d1_databases": [
+    {
+      "binding": "DB",
+      "database_name": "ldn-house",
+      "database_id": "bd094337-9100-4beb-b0ab-7cc63d6afaed",
+      "migrations_dir": "drizzle"
+    }
+  ],
+  "triggers": {
+    // Half-hourly for consumption, which also catches the ~16:00 Agile
+    // publication of the next day's rates.
+    "crons": ["7,37 * * * *"]
+  },
   // Mirrors what the dashboard reports, so Workers Builds stops flagging drift.
   // The top-level `enabled` is the legacy switch, superseded by logs/traces.
   // `redact_query_string` is omitted: the dashboard emits it but wrangler 4.127

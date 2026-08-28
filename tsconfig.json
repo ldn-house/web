@@ -6,7 +6,7 @@
     "lib": ["esnext", "dom", "dom.iterable"],
     "jsx": "preserve",
     "jsxImportSource": "@solidjs/web",
-    "types": ["vite/client", "@types/bun"],
+    "types": ["vite/client", "@cloudflare/vitest-plugin/types"],
     "strict": true,
     "noUncheckedIndexedAccess": true,
     "noEmit": true,

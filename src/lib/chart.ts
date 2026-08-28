@@ -1,9 +1,3 @@
-/**
- * Chart maths only — no DOM, no side effects. Both the server render and any
- * later client interaction read from these, so a chart is fully described by
- * its geometry before anything hydrates.
- */
-
 export type Scale = (value: number) => number;
 
 export function linearScale(

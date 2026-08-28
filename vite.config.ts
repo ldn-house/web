@@ -5,11 +5,11 @@ import { defineConfig } from 'vite';
 
 export default defineConfig({
   plugins: [
-    // Start mode owns the entries, the dev SSR middleware and the two builds.
-    // The Cloudflare plugin adopts the `ssr` environment (see wrangler.jsonc),
-    // so pages render in workerd with bindings in dev as well as production.
+    // `external` hands the server environment to the Cloudflare plugin, which
+    // builds its own rather than adopting Solid's `ssr` one.
     solid({ start: { external: true }, ssr: true }),
-    cloudflare(),
+    // CI points this at a generated per-PR config; defaults to wrangler.jsonc.
+    cloudflare({ configPath: process.env.WRANGLER_CONFIG }),
     tailwindcss(),
   ],
 });
