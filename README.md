@@ -32,8 +32,16 @@ bun run test    # vitest in the Workers runtime, D1 included
 - **Charts are server-rendered SVG** (`src/components/UsageChart.tsx`). The
   bars are in the HTML, so a chart is readable with JavaScript disabled and
   paints without a client round trip — `<title>` gives native hover tooltips
-  for free. Hydration only adds interaction on top. Chart maths lives in
-  `src/lib/chart.ts` as pure functions with no DOM access.
+  for free. Chart maths lives in `src/lib/chart.ts` as pure functions with no
+  DOM access.
+- **No `<Loading>` boundary around the data.** Solid 2's loading boundary (the
+  successor to `Suspense`) defers its children into `<template>` blocks that
+  only JavaScript can materialise, so a no-JS client sees the fallback forever.
+  Without a boundary the render blocks until the async memos resolve and the
+  markup lands in the shell instead. That trades streaming for a first byte
+  that already contains the chart, which is the right way round here.
+- **Data comes from `"use server"` functions** in `src/lib/queries.ts` reading
+  D1 through `env` from `cloudflare:workers`.
 - **Tailwind v4** via `@tailwindcss/vite` — a pure Vite plugin, so it never
   interacts with Solid's OXC JSX transform.
 

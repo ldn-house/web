@@ -1,0 +1,3 @@
+# Vite fingerprints these, so content can never change under a given name.
+/assets/*
+  Cache-Control: public, max-age=31536000, immutable
