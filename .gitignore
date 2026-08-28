@@ -5,4 +5,3 @@ wrangler.preview.json
 .dev.vars
 *.local
 .DS_Store
-worker-configuration.d.ts

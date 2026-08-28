@@ -74,6 +74,10 @@ second write path — so previews exercise the same parsing, upserts and
 normalisation as production. The route does not exist without `SEED_TOKEN`,
 which is only set on previews.
 
+`worker-configuration.d.ts` is generated but committed, so CI can typecheck
+without Cloudflare credentials. Regenerate it with `bun cf-typegen` after
+changing bindings in `wrangler.jsonc`.
+
 Required repository secrets: `CLOUDFLARE_ACCOUNT_ID`, and a `CLOUDFLARE_API_TOKEN`
 with Workers Scripts edit, D1 edit and Workers Routes edit.
 
