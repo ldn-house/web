@@ -34,6 +34,8 @@ jobs:
     runs-on: ubuntu-latest
     permissions:
       pull-requests: write
+    env:
+      SEED_TOKEN: ${{ github.run_id }}-${{ github.run_attempt }}-${{ github.sha }}
     steps:
       - uses: actions/checkout@v4
       - uses: oven-sh/setup-bun@v2
@@ -45,7 +47,6 @@ jobs:
         run: bun scripts/preview/provision.ts
         env:
           PR_NUMBER: ${{ github.event.number }}
-          SEED_TOKEN: ${{ github.run_id }}-${{ github.run_attempt }}-${{ github.sha }}
 
       # The Cloudflare plugin reads this and writes the matching deploy redirect,
       # so the deploy below needs no --config of its own.
@@ -61,6 +62,19 @@ jobs:
           url=$(grep -oE 'https://[a-z0-9-]+\.[a-z0-9-]+\.workers\.dev' deploy.log | head -1)
           echo "url=$url" >> "$GITHUB_OUTPUT"
 
+      # wrangler reports success before the workers.dev hostname serves, so
+      # seeding immediately after deploy races the route becoming live.
+      - name: Wait for the deployment to answer
+        run: |
+          for _ in $(seq 1 30); do
+            if curl --fail --silent --output /dev/null "${{ steps.deploy.outputs.url }}/api/health"; then
+              exit 0
+            fi
+            sleep 2
+          done
+          echo "preview did not become reachable within 60s" >&2
+          exit 1
+
       - name: Seed from the captured fixture
         run: |
           curl --fail --silent --show-error \
@@ -68,8 +82,6 @@ jobs:
             -H "Authorization: Bearer $SEED_TOKEN" \
             -H 'Content-Type: application/json' \
             --data-binary @src/fixtures/octopus.json
-        env:
-          SEED_TOKEN: ${{ github.run_id }}-${{ github.run_attempt }}-${{ github.sha }}
 
       - name: Comment the preview URL
         env:
