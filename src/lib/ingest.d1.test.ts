@@ -259,3 +259,27 @@ describe('ingest against D1', () => {
     expect(row?.interval_start).toBe('2026-07-15T00:00:00Z');
   });
 });
+
+describe('rate ordering', () => {
+  it('writes rates oldest-first so a truncated run resumes forward', async () => {
+    await env.DB.batch([
+      env.DB.prepare('DELETE FROM unit_rates'),
+      env.DB.prepare('DELETE FROM consumption'),
+    ]);
+
+    // Octopus serves newest-first; a partial write in that order would strand
+    // the watermark at the newest slot and skip everything older forever.
+    const api: FakeApi = {
+      readings: [],
+      rates: rates('2026-01-01T00:00:00Z', 6).reverse(),
+      standing: [],
+    };
+    await ingest(env, { fetchImpl: fakeOctopus(api).fetchImpl });
+
+    const written = await env.DB.prepare(
+      'SELECT valid_from FROM unit_rates ORDER BY rowid',
+    ).all<{ valid_from: string }>();
+    const order = written.results.map((r) => r.valid_from);
+    expect(order).toEqual([...order].sort());
+  });
+});
