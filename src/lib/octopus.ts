@@ -1,11 +1,6 @@
 /**
- * Octopus Energy API client.
- *
- * Two APIs are in play. The REST API serves consumption and tariff data with
- * HTTP Basic auth (API key as username, empty password). Account *discovery*
- * only exists on GraphQL — `GET /v1/accounts/` returns 403 — so the key is
- * exchanged for a Kraken token to learn the account number, and everything
- * after that is REST.
+ * REST serves consumption and tariff data (Basic auth, API key as username).
+ * Account discovery is GraphQL-only — `GET /v1/accounts/` returns 403.
  */
 
 const REST = 'https://api.octopus.energy/v1';
@@ -26,8 +21,9 @@ export interface RatePeriod {
   value_exc_vat: number;
   value_inc_vat: number;
   valid_from: string;
-  /** Null on the open-ended current period. */
   valid_to: string | null;
+  /** Null on tariffs that do not price by payment method, such as Agile. */
+  payment_method: string | null;
 }
 
 export interface Agreement {
@@ -78,10 +74,6 @@ interface Page<T> {
   results: T[];
 }
 
-/**
- * Walks the `next` chain. Octopus caps `page_size` well below the full rate
- * history, so paging is required for anything but a short window.
- */
 async function getAllPages<T>(
   first: string,
   apiKey: string,
@@ -97,11 +89,7 @@ async function getAllPages<T>(
   return all;
 }
 
-/**
- * Exchanges the API key for a Kraken token and reads the account number off it.
- * Throws when the key is attached to more than one account, since picking one
- * silently would ingest the wrong meter.
- */
+/** Throws on multiple accounts rather than silently ingesting the wrong meter. */
 export async function discoverAccountNumber(
   apiKey: string,
   fetchImpl: Fetcher = fetch,
@@ -135,7 +123,7 @@ export async function discoverAccountNumber(
   return accounts[0]!.number;
 }
 
-/** Import meter points only — export would need its own consumption table. */
+/** Import meter points only; export would need its own consumption table. */
 export async function fetchAccount(
   apiKey: string,
   accountNumber: string,
@@ -152,11 +140,7 @@ export async function fetchAccount(
   return { number: accountNumber, meterPoints };
 }
 
-/**
- * `E-1R-AGILE-24-10-01-C` -> `AGILE-24-10-01`. Tariff codes carry a fuel and
- * register prefix and a trailing distribution-region letter; the product code
- * in between is what the tariff endpoints are keyed on.
- */
+/** `E-1R-AGILE-24-10-01-C` -> `AGILE-24-10-01`, which is what tariff endpoints key on. */
 export function productCodeFromTariff(tariffCode: string): string {
   const match = /^[A-Z]-\d+R-(.+)-[A-Z]$/.exec(tariffCode);
   if (!match) throw new OctopusError(`Unrecognised tariff code: ${tariffCode}`);
@@ -164,11 +148,8 @@ export function productCodeFromTariff(tariffCode: string): string {
 }
 
 /**
- * Half-hourly readings from `periodFrom` onwards.
- *
- * `period_from` is not optional in practice: without it Octopus returns only a
- * short recent window rather than the full history, silently and with a `count`
- * that matches the truncated set.
+ * `periodFrom` is required, not optional: without it Octopus returns a short
+ * recent window with a `count` matching the truncated set, so it looks complete.
  */
 export async function fetchConsumption(
   apiKey: string,

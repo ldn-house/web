@@ -1,13 +1,9 @@
 import { index, primaryKey, real, sqliteTable, text } from 'drizzle-orm/sqlite-core';
 
 /**
- * Half-hourly import readings from the smart meter. Octopus reports one row per
- * 30-minute slot; `interval_start` is unique because only one meter reports at a
- * time, and `meter_serial` is kept for provenance across meter exchanges.
- *
- * All timestamps are normalised to UTC on ingest (see `toUtcIso`) so they sort
- * lexicographically and BETWEEN works directly in SQL. The API itself is not
- * consistent — consumption arrives in local time with an offset.
+ * Half-hourly import readings. `interval_start` is unique because only one meter
+ * reports at a time; `meter_serial` is provenance across meter exchanges.
+ * Timestamps are normalised to UTC on ingest so they sort lexicographically.
  */
 export const consumption = sqliteTable(
   'consumption',
@@ -21,46 +17,47 @@ export const consumption = sqliteTable(
 );
 
 /**
- * Unit rates per tariff. Agile publishes one row per 30-minute slot; fixed and
- * variable tariffs publish a handful of long-lived rows. Both shapes fit here,
- * which is what makes the Agile-versus-Flexible counterfactual a single join
- * rather than a second ingest path.
+ * Agile publishes a row per 30-minute slot, variable tariffs a handful of
+ * long-lived rows. One table for both makes the counterfactual a single join.
  *
- * `valid_to` is null for the open-ended current rate.
+ * `payment_method` is part of the key: variable tariffs publish DIRECT_DEBIT and
+ * NON_DIRECT_DEBIT rows sharing a `valid_from` at different prices. Tariffs that
+ * do not vary by payment method store `ANY` rather than null, because SQLite
+ * treats nulls in a unique index as distinct and would admit duplicates.
  */
 export const unitRates = sqliteTable(
   'unit_rates',
   {
     tariffCode: text('tariff_code').notNull(),
     validFrom: text('valid_from').notNull(),
+    paymentMethod: text('payment_method').notNull(),
     validTo: text('valid_to'),
     pIncVat: real('p_inc_vat').notNull(),
     pExcVat: real('p_exc_vat').notNull(),
   },
   (table) => [
-    primaryKey({ columns: [table.tariffCode, table.validFrom] }),
+    primaryKey({ columns: [table.tariffCode, table.validFrom, table.paymentMethod] }),
     index('unit_rates_valid_from_idx').on(table.validFrom),
   ],
 );
 
-/** Daily standing charges, same shape and lifecycle as unit rates. */
+/** Daily standing charges, same shape and keying as unit rates. */
 export const standingCharges = sqliteTable(
   'standing_charges',
   {
     tariffCode: text('tariff_code').notNull(),
     validFrom: text('valid_from').notNull(),
+    paymentMethod: text('payment_method').notNull(),
     validTo: text('valid_to'),
     pIncVat: real('p_inc_vat').notNull(),
     pExcVat: real('p_exc_vat').notNull(),
   },
-  (table) => [primaryKey({ columns: [table.tariffCode, table.validFrom] })],
+  (table) => [
+    primaryKey({ columns: [table.tariffCode, table.validFrom, table.paymentMethod] }),
+  ],
 );
 
-/**
- * Which tariff was actually in force when. Joining consumption through this to
- * `unit_rates` gives the real bill; joining it to a different tariff code gives
- * the counterfactual.
- */
+/** Which tariff was in force when. Join through it for the real bill, around it for the counterfactual. */
 export const agreements = sqliteTable(
   'agreements',
   {

@@ -9,15 +9,14 @@ api.get('/health', (c) => c.json({ ok: true }));
 export default {
   fetch(request, env, ctx) {
     const { pathname } = new URL(request.url);
-    // Hono owns the JSON API and webhook endpoints; Solid renders everything else.
+    // Hono owns the API; Solid renders everything else.
     if (pathname === '/api' || pathname.startsWith('/api/')) {
       return api.fetch(request, env, ctx);
     }
     return handleRequest(request);
   },
 
-  // The first tick backfills, because an empty table has no watermark to
-  // resume from; every tick after that pulls only what is new.
+  // The first tick backfills: an empty table has no watermark to resume from.
   async scheduled(_controller, env, ctx) {
     ctx.waitUntil(
       ingest(env).then(

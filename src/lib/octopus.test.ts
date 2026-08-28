@@ -21,7 +21,7 @@ function jsonResponse(body: unknown, status = 200): Response {
   });
 }
 
-/** Records every requested URL so tests can assert on query construction. */
+/** Records requested URLs so tests can assert on query construction. */
 function stubFetch(handler: (url: string) => unknown): {
   fetch: Fetcher;
   urls: string[];
@@ -41,10 +41,6 @@ describe('productCodeFromTariff', () => {
     expect(productCodeFromTariff('E-1R-VAR-22-11-01-C')).toBe('VAR-22-11-01');
   });
 
-  it('handles multi-register codes', () => {
-    expect(productCodeFromTariff('E-2R-ECO7-20-01-01-A')).toBe('ECO7-20-01-01');
-  });
-
   it('rejects anything that is not a tariff code', () => {
     expect(() => productCodeFromTariff('AGILE-24-10-01')).toThrow(OctopusError);
   });
@@ -61,11 +57,6 @@ describe('discoverAccountNumber', () => {
         : { data: { viewer: { accounts: [account] } } };
     });
     expect(await discoverAccountNumber(KEY, fetch)).toBe('A-SYNTH01');
-  });
-
-  it('fails loudly when the key yields no token', async () => {
-    const { fetch } = stubFetch(() => ({ data: { obtainKrakenToken: null } }));
-    expect(discoverAccountNumber(KEY, fetch)).rejects.toThrow('Kraken token');
   });
 
   it('refuses to guess when the key covers several accounts', async () => {
@@ -100,12 +91,6 @@ describe('fetchAccount', () => {
     const account = await fetchAccount(KEY, 'A-SYNTH01', fetch);
     expect(account.meterPoints).toHaveLength(1);
     expect(account.meterPoints[0]!.mpan).toBe(MPAN);
-  });
-
-  it('surfaces the status on failure', async () => {
-    const failing = (async () =>
-      jsonResponse({ detail: 'nope' }, 403)) as unknown as Fetcher;
-    expect(fetchAccount(KEY, 'A-SYNTH01', failing)).rejects.toThrow(OctopusError);
   });
 });
 

@@ -1,9 +1,6 @@
 import type { Slot } from '../components/UsageChart';
 
-/**
- * Synthetic half-hourly profile standing in for the Octopus feed until ingest
- * lands: an overnight base load with a morning bump and an evening peak.
- */
+/** Placeholder profile until the page reads from D1. */
 export function sampleDay(day = new Date('2026-08-27T00:00:00Z')): Slot[] {
   const shape = (hour: number) => {
     const base = 0.28;
@@ -14,7 +11,7 @@ export function sampleDay(day = new Date('2026-08-27T00:00:00Z')): Slot[] {
 
   return Array.from({ length: 48 }, (_, index) => {
     const hour = index / 2;
-    // Deterministic jitter so the server render is stable across requests.
+    // Deterministic so the server render is stable across requests.
     const jitter = 0.04 * Math.sin(index * 2.399);
     return {
       start: new Date(day.getTime() + index * 30 * 60 * 1000),

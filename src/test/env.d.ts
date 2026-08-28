@@ -1,10 +1,6 @@
 import type { D1Migration } from 'cloudflare:test';
 
-/**
- * Test-only bindings supplied by `vitest.config.ts`. In v1 of the plugin
- * `cloudflare:test`'s `env` is typed as `Cloudflare.Env`, so the augmentation
- * goes there rather than on the old `ProvidedEnv`.
- */
+/** Test-only bindings from `vitest.config.ts`. v1 types `env` as `Cloudflare.Env`. */
 declare global {
   namespace Cloudflare {
     interface Env {

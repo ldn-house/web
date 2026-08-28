@@ -11,11 +11,7 @@ const WIDTH = 720;
 const HEIGHT = 200;
 const PAD = { top: 8, right: 8, bottom: 22, left: 32 };
 
-/**
- * Server-rendered SVG: the bars exist in the HTML, so the chart is readable
- * with JavaScript disabled and paints without a client round trip. Hydration
- * only adds the hover affordance on top of markup that is already there.
- */
+/** Bars live in the HTML, so the chart reads without JavaScript. */
 export function UsageChart(props: { slots: readonly Slot[] }) {
   const peak = () => niceCeiling(Math.max(...props.slots.map((s) => s.kwh)));
   const y = () => linearScale([0, peak()], [HEIGHT - PAD.bottom, PAD.top]);
@@ -28,8 +24,7 @@ export function UsageChart(props: { slots: readonly Slot[] }) {
       role="img"
       aria-label="Half-hourly electricity consumption"
     >
-      {/* No <title> on the root: it would render as a tooltip over the whole
-          chart, including the gaps between bars. `aria-label` already names it. */}
+      {/* No root <title>: it would tooltip the gaps between bars too. */}
       <For each={[0, 0.5, 1]}>
         {(fraction) => (
           <>

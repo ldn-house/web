@@ -17,7 +17,7 @@ bun run preview # build, then serve the production artifact in workerd
 bun run deploy  # build and wrangler deploy
 bun typecheck
 bun lint
-bun test        # vitest in the Workers runtime, D1 included
+bun run test    # vitest in the Workers runtime, D1 included
 ```
 
 ## Architecture
@@ -46,7 +46,8 @@ deployed database uses. That matters for the ingest: D1 caps a statement at 100
 bound parameters, and a mocked database would never surface it.
 
 Storage is isolated per test *file*, not per test, so cases that assert on row
-counts reset their tables in `beforeEach`.
+counts reset their tables in `beforeEach`. Use `bun run test` — a bare
+`bun test` invokes Bun's own runner, which cannot resolve `cloudflare:test`.
 
 ## Version notes
 

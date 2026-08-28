@@ -16,19 +16,21 @@ CREATE INDEX `consumption_interval_end_idx` ON `consumption` (`interval_end`);--
 CREATE TABLE `standing_charges` (
 	`tariff_code` text NOT NULL,
 	`valid_from` text NOT NULL,
+	`payment_method` text NOT NULL,
 	`valid_to` text,
 	`p_inc_vat` real NOT NULL,
 	`p_exc_vat` real NOT NULL,
-	PRIMARY KEY(`tariff_code`, `valid_from`)
+	PRIMARY KEY(`tariff_code`, `valid_from`, `payment_method`)
 );
 --> statement-breakpoint
 CREATE TABLE `unit_rates` (
 	`tariff_code` text NOT NULL,
 	`valid_from` text NOT NULL,
+	`payment_method` text NOT NULL,
 	`valid_to` text,
 	`p_inc_vat` real NOT NULL,
 	`p_exc_vat` real NOT NULL,
-	PRIMARY KEY(`tariff_code`, `valid_from`)
+	PRIMARY KEY(`tariff_code`, `valid_from`, `payment_method`)
 );
 --> statement-breakpoint
 CREATE INDEX `unit_rates_valid_from_idx` ON `unit_rates` (`valid_from`);
