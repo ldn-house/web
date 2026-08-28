@@ -8,6 +8,7 @@ import {
   fetchConsumption,
   fetchStandingCharges,
   fetchUnitRates,
+  type RatePeriod,
 } from './octopus';
 
 /** D1 caps a statement at 100 bound parameters. */
@@ -203,6 +204,15 @@ export async function ingest(
           fetchImpl,
         ),
       ]);
+
+      // Octopus serves rates newest-first and ignores order_by on this
+      // endpoint. Writing them oldest-first means a run that dies part way
+      // leaves the watermark mid-history, so the next one resumes forward
+      // rather than past the gap it never filled.
+      const oldestFirst = (a: RatePeriod, b: RatePeriod) =>
+        Date.parse(a.valid_from) - Date.parse(b.valid_from);
+      rates.sort(oldestFirst);
+      standing.sort(oldestFirst);
 
       const toRow = (r: (typeof rates)[number]) => ({
         tariffCode: tariff,
