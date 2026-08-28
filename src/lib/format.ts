@@ -1,6 +1,5 @@
 const LONDON = 'Europe/London';
 
-/** Timestamps are stored in UTC but a house is read in local time. */
 export function londonTime(iso: string): string {
   return new Intl.DateTimeFormat('en-GB', {
     timeZone: LONDON,
@@ -22,11 +21,10 @@ export function londonDay(iso: string): string {
 export interface AxisTick {
   index: number;
   time: string;
-  /** Set only when the day changes, so a multi-day axis stays readable. */
+  /** Null unless the day changed, so a multi-day axis is not repetitive. */
   day: string | null;
 }
 
-/** Labels for a time axis, marking each new day exactly once. */
 export function axisTicks(
   starts: readonly string[],
   indices: readonly number[],

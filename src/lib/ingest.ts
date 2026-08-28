@@ -55,11 +55,8 @@ function chunk<T>(rows: readonly T[], size: number): T[][] {
 }
 
 /**
- * Upserts with an update rather than ignoring conflicts: `valid_to` starts null
- * on the current period and is filled in once the next one begins, and readings
- * can be revised. Ignoring conflicts would pin the first version forever.
- *
- * Returns rows sent, not rows changed; overlapping re-ingests are expected.
+ * Updates on conflict rather than ignoring: `valid_to` starts null and is filled
+ * in once the next period begins, so ignoring would pin the first version.
  */
 async function upsertAll<T extends Record<string, unknown>>(
   db: DrizzleD1Database<typeof schema>,
@@ -128,7 +125,6 @@ async function watermarks(db: DrizzleD1Database<typeof schema>) {
   };
 }
 
-/** Incremental by default; pass `since` to force a wider window. */
 export async function ingest(
   env: Env,
   options: { since?: string; fetchImpl?: Fetcher } = {},

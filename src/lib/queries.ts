@@ -25,7 +25,6 @@ const db = () => drizzle(env.DB, { schema });
 const CAP_TARIFF = 'E-1R-VAR-22-11-01-C';
 const CAP_PAYMENT_METHOD = 'DIRECT_DEBIT';
 
-/** Half-hourly readings for the `hours` before the newest reading, oldest first. */
 export async function recentConsumption(hours = 48): Promise<Slot[]> {
   const client = db();
   const [latest] = await client
@@ -43,7 +42,6 @@ export async function recentConsumption(hours = 48): Promise<Slot[]> {
     .orderBy(asc(schema.consumption.intervalStart));
 }
 
-/** The tariff in force at `at`, from the agreements the account actually holds. */
 async function tariffInForce(at: string): Promise<string | null> {
   const [agreement] = await db()
     .select({ tariffCode: schema.agreements.tariffCode })
@@ -59,11 +57,7 @@ async function tariffInForce(at: string): Promise<string | null> {
   return agreement?.tariffCode ?? null;
 }
 
-/**
- * Unit rates from `from` onwards on whichever tariff is currently in force.
- * Agile publishes the next day's prices mid-afternoon, so this deliberately
- * returns everything already known rather than stopping at now.
- */
+/** Agile publishes tomorrow's prices mid-afternoon, so this runs past now. */
 export async function upcomingRates(from: string): Promise<RateSlot[]> {
   const tariffCode = await tariffInForce(new Date().toISOString());
   if (!tariffCode) return [];
@@ -81,7 +75,6 @@ export async function upcomingRates(from: string): Promise<RateSlot[]> {
     .limit(96);
 }
 
-/** Unit price on the capped standard tariff at `at`, as a comparison line. */
 export async function cappedRate(at: string): Promise<number | null> {
   const [rate] = await db()
     .select({ pIncVat: schema.unitRates.pIncVat })

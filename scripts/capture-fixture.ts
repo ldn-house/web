@@ -1,9 +1,8 @@
 /**
- * Records a slice of the live Octopus API into src/fixtures/octopus.json for
- * seeding preview deployments. Run manually with OCTOPUS_API_KEY in .dev.vars;
- * the output is committed, so every identifier is replaced with a synthetic one.
+ * bun scripts/capture-fixture.ts [days]
  *
- *   bun scripts/capture-fixture.ts [days]
+ * Needs OCTOPUS_API_KEY. The output is committed, so identifiers are replaced
+ * with synthetic ones and the script refuses to write if a real one survives.
  */
 import { writeFileSync } from 'node:fs';
 import {

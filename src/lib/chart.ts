@@ -17,15 +17,10 @@ export function niceCeiling(max: number): number {
   return Math.ceil(max / magnitude) * magnitude;
 }
 
-/** Evenly spaced values from 0 to `max` inclusive, for a value axis. */
 export function ticks(max: number, count = 4): number[] {
   return Array.from({ length: count + 1 }, (_, i) => (max / count) * i);
 }
 
-/**
- * Indices into a series at roughly `count` even intervals, always including the
- * first. Used to label a time axis without measuring text.
- */
 export function tickIndices(length: number, count = 6): number[] {
   if (length === 0) return [];
   const step = Math.max(Math.floor(length / count), 1);
@@ -34,7 +29,6 @@ export function tickIndices(length: number, count = 6): number[] {
   return out;
 }
 
-/** SVG path for a step line: each point holds its value until the next. */
 export function stepPath(
   points: readonly { x: number; y: number }[],
   endX: number,

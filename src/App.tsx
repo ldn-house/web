@@ -5,7 +5,6 @@ import { UsageChart } from './components/UsageChart';
 import { londonDay, londonTime } from './lib/format';
 import { cappedRate, recentConsumption, upcomingRates } from './lib/queries';
 
-/** Rates are half-hourly, so the current slot starts on the last :00 or :30. */
 function currentSlotStart(now = new Date()): string {
   const floored = new Date(now);
   floored.setUTCMinutes(now.getUTCMinutes() < 30 ? 0 : 30, 0, 0);

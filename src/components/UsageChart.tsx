@@ -7,9 +7,7 @@ const WIDTH = 720;
 const HEIGHT = 220;
 const PAD = { top: 10, right: 8, bottom: 24, left: 38 };
 
-/** Bars live in the HTML, so the chart reads without JavaScript. */
 export function UsageChart(props: { slots: readonly Slot[] }) {
-  // Read once per bar, so memoised rather than rescanning every slot each time.
   const peak = createMemo(() => niceCeiling(Math.max(...props.slots.map((s) => s.kwh))));
   const y = createMemo(() => linearScale([0, peak()], [HEIGHT - PAD.bottom, PAD.top]));
   const barWidth = createMemo(

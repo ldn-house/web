@@ -1,10 +1,6 @@
 import { index, primaryKey, real, sqliteTable, text } from 'drizzle-orm/sqlite-core';
 
-/**
- * Half-hourly import readings. `interval_start` is unique because only one meter
- * reports at a time; `meter_serial` is provenance across meter exchanges.
- * Timestamps are normalised to UTC on ingest so they sort lexicographically.
- */
+/** `interval_start` is unique because only one meter reports at a time. */
 export const consumption = sqliteTable(
   'consumption',
   {
@@ -17,13 +13,10 @@ export const consumption = sqliteTable(
 );
 
 /**
- * Agile publishes a row per 30-minute slot, variable tariffs a handful of
- * long-lived rows. One table for both makes the counterfactual a single join.
- *
- * `payment_method` is part of the key: variable tariffs publish DIRECT_DEBIT and
+ * `payment_method` is keyed because variable tariffs publish DIRECT_DEBIT and
  * NON_DIRECT_DEBIT rows sharing a `valid_from` at different prices. Tariffs that
- * do not vary by payment method store `ANY` rather than null, because SQLite
- * treats nulls in a unique index as distinct and would admit duplicates.
+ * do not vary by it store `ANY`, not null: SQLite treats nulls in a unique index
+ * as distinct and would admit duplicates.
  */
 export const unitRates = sqliteTable(
   'unit_rates',
@@ -41,7 +34,6 @@ export const unitRates = sqliteTable(
   ],
 );
 
-/** Daily standing charges, same shape and keying as unit rates. */
 export const standingCharges = sqliteTable(
   'standing_charges',
   {
@@ -57,7 +49,7 @@ export const standingCharges = sqliteTable(
   ],
 );
 
-/** Which tariff was in force when. Join through it for the real bill, around it for the counterfactual. */
+/** Join through it for the real bill, around it for a counterfactual. */
 export const agreements = sqliteTable(
   'agreements',
   {

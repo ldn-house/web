@@ -1,4 +1,4 @@
-/** Removes the PR's Worker and database. The free plan caps D1 at 10 databases. */
+/** The free plan caps D1 at 10 databases, so this is not optional. */
 import { $ } from 'bun';
 import { previewNames } from './config';
 
