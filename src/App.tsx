@@ -1,11 +1,10 @@
 import type { JSX } from '@solidjs/web';
 import { createMemo, Show } from 'solid-js';
-import { RateStrip } from './components/RateStrip';
+import { RateChart } from './components/RateChart';
 import { UsageChart } from './components/UsageChart';
 import { londonDay, londonTime } from './lib/format';
-import { recentConsumption, upcomingRates } from './lib/queries';
+import { cappedRate, recentConsumption, upcomingRates } from './lib/queries';
 
-/** Rates are half-hourly, so the current slot starts on the last :00 or :30. */
 function currentSlotStart(now = new Date()): string {
   const floored = new Date(now);
   floored.setUTCMinutes(now.getUTCMinutes() < 30 ? 0 : 30, 0, 0);
@@ -29,6 +28,7 @@ function Panel(props: { title: string; aside?: string; children: JSX.Element }) 
 export default function App() {
   const slots = createMemo(async () => recentConsumption(48));
   const rates = createMemo(async () => upcomingRates(currentSlotStart()));
+  const cap = createMemo(async () => cappedRate(new Date().toISOString()));
 
   const total = () => slots().reduce((sum, slot) => sum + slot.kwh, 0);
   const now = () => rates()[0];
@@ -61,7 +61,7 @@ export default function App() {
           when={rates().length}
           fallback={<p class="text-sm text-neutral-500">No rates published.</p>}
         >
-          <RateStrip rates={rates()} />
+          <RateChart rates={rates()} cap={cap()} />
           <p class="mt-3 text-xs text-neutral-500">
             Cheapest {Math.min(...rates().map((r) => r.pIncVat)).toFixed(2)}p at{' '}
             {londonTime(rates().reduce((a, b) => (b.pIncVat < a.pIncVat ? b : a)).start)}

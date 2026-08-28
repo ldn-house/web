@@ -8,7 +8,6 @@ export function previewNames(pr: string | number) {
 }
 
 /**
- * Derives a preview config from the committed one so the two cannot drift.
  * Routes and cron triggers are dropped: a preview must not answer on
  * preview.ldn.house, and every open PR running the ingest would hammer Octopus.
  */

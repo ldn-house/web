@@ -18,7 +18,13 @@ export interface RateSlot {
 
 const db = () => drizzle(env.DB, { schema });
 
-/** Half-hourly readings for the `hours` before the newest reading, oldest first. */
+/**
+ * Octopus's Flexible product is the price-capped variable tariff. It cannot be
+ * read off `agreements` because the account has since moved to Agile.
+ */
+const CAP_TARIFF = 'E-1R-VAR-22-11-01-C';
+const CAP_PAYMENT_METHOD = 'DIRECT_DEBIT';
+
 export async function recentConsumption(hours = 48): Promise<Slot[]> {
   const client = db();
   const [latest] = await client
@@ -36,7 +42,6 @@ export async function recentConsumption(hours = 48): Promise<Slot[]> {
     .orderBy(asc(schema.consumption.intervalStart));
 }
 
-/** The tariff in force at `at`, from the agreements the account actually holds. */
 async function tariffInForce(at: string): Promise<string | null> {
   const [agreement] = await db()
     .select({ tariffCode: schema.agreements.tariffCode })
@@ -52,11 +57,7 @@ async function tariffInForce(at: string): Promise<string | null> {
   return agreement?.tariffCode ?? null;
 }
 
-/**
- * Unit rates from `from` onwards on whichever tariff is currently in force.
- * Agile publishes the next day's prices mid-afternoon, so this deliberately
- * returns everything already known rather than stopping at now.
- */
+/** Agile publishes tomorrow's prices mid-afternoon, so this runs past now. */
 export async function upcomingRates(from: string): Promise<RateSlot[]> {
   const tariffCode = await tariffInForce(new Date().toISOString());
   if (!tariffCode) return [];
@@ -72,4 +73,21 @@ export async function upcomingRates(from: string): Promise<RateSlot[]> {
     )
     .orderBy(asc(schema.unitRates.validFrom))
     .limit(96);
+}
+
+export async function cappedRate(at: string): Promise<number | null> {
+  const [rate] = await db()
+    .select({ pIncVat: schema.unitRates.pIncVat })
+    .from(schema.unitRates)
+    .where(
+      and(
+        eq(schema.unitRates.tariffCode, CAP_TARIFF),
+        eq(schema.unitRates.paymentMethod, CAP_PAYMENT_METHOD),
+        lte(schema.unitRates.validFrom, at),
+        or(isNull(schema.unitRates.validTo), gt(schema.unitRates.validTo, at)),
+      ),
+    )
+    .orderBy(desc(schema.unitRates.validFrom))
+    .limit(1);
+  return rate?.pIncVat ?? null;
 }

@@ -1,6 +1,5 @@
 import type { Fetcher } from './octopus';
 
-/** Octopus-shaped responses captured from the live API, with identifiers scrubbed. */
 export interface OctopusFixture {
   accountNumber: string;
   mpan: string;
@@ -11,11 +10,7 @@ export interface OctopusFixture {
   standingCharges: Record<string, unknown[]>;
 }
 
-/**
- * Serves a fixture over the same request shapes the live API uses, so seeding
- * runs the real ingest — parsing, pagination, upserts and all — rather than a
- * parallel code path that could drift from it.
- */
+/** Serves a fixture over the live API's request shapes, so seeding runs the real ingest. */
 export function replayFetcher(fixture: OctopusFixture): Fetcher {
   let tokenIssued = false;
 

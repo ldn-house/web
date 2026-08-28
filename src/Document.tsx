@@ -1,7 +1,6 @@
 import { HydrationScript, type JSX } from '@solidjs/web';
 import './app.css';
 
-/** Start mode injects the hashed entry and stylesheet links into <head>. */
 export default function Document(props: { children: JSX.Element }) {
   return (
     <html lang="en-GB">

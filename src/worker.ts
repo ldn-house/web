@@ -7,11 +7,7 @@ const api = new Hono<{ Bindings: Env }>().basePath('/api');
 
 api.get('/health', (c) => c.json({ ok: true }));
 
-/**
- * Loads a captured fixture through the real ingest, so preview deployments get
- * data without a second write path that could drift from production's.
- * Absent in production: without SEED_TOKEN the route does not exist.
- */
+/** Absent in production: without SEED_TOKEN the route does not exist. */
 api.post('/seed', async (c) => {
   const expected = c.env.SEED_TOKEN;
   if (!expected) return c.notFound();
@@ -30,7 +26,6 @@ api.post('/seed', async (c) => {
 export default {
   fetch(request, env, ctx) {
     const { pathname } = new URL(request.url);
-    // Hono owns the API; Solid renders everything else.
     if (pathname === '/api' || pathname.startsWith('/api/')) {
       return api.fetch(request, env, ctx);
     }

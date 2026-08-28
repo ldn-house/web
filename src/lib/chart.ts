@@ -16,3 +16,31 @@ export function niceCeiling(max: number): number {
   const magnitude = 10 ** Math.floor(Math.log10(max));
   return Math.ceil(max / magnitude) * magnitude;
 }
+
+export function ticks(max: number, count = 4): number[] {
+  return Array.from({ length: count + 1 }, (_, i) => (max / count) * i);
+}
+
+export function tickIndices(length: number, count = 6): number[] {
+  if (length === 0) return [];
+  const step = Math.max(Math.floor(length / count), 1);
+  const out: number[] = [];
+  for (let i = 0; i < length; i += step) out.push(i);
+  return out;
+}
+
+export function stepPath(
+  points: readonly { x: number; y: number }[],
+  endX: number,
+): string {
+  if (points.length === 0) return '';
+  const parts = [`M ${points[0]!.x} ${points[0]!.y}`];
+  for (let i = 1; i < points.length; i += 1) {
+    parts.push(
+      `L ${points[i]!.x} ${points[i - 1]!.y}`,
+      `L ${points[i]!.x} ${points[i]!.y}`,
+    );
+  }
+  parts.push(`L ${endX} ${points.at(-1)!.y}`);
+  return parts.join(' ');
+}

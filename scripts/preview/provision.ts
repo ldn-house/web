@@ -1,7 +1,4 @@
-/**
- * Creates the PR's database if it does not exist, applies migrations to it and
- * writes the preview Wrangler config. Idempotent: reruns on every push to the PR.
- */
+/** Idempotent: reruns on every push to the PR. */
 import { writeFileSync } from 'node:fs';
 import { $ } from 'bun';
 import { PREVIEW_CONFIG_PATH, previewConfig, previewNames } from './config';
