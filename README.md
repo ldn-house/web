@@ -17,6 +17,7 @@ bun run preview # build, then serve the production artifact in workerd
 bun run deploy  # build and wrangler deploy
 bun typecheck
 bun lint
+bun test        # vitest in the Workers runtime, D1 included
 ```
 
 ## Architecture
@@ -35,6 +36,17 @@ bun lint
   `src/lib/chart.ts` as pure functions with no DOM access.
 - **Tailwind v4** via `@tailwindcss/vite` — a pure Vite plugin, so it never
   interacts with Solid's OXC JSX transform.
+
+## Testing
+
+Tests run under [`@cloudflare/vitest-plugin`](https://developers.cloudflare.com/workers/testing/vitest-integration/)
+(renamed from `@cloudflare/vitest-pool-workers` in August 2026), so they execute
+inside workerd against a real Miniflare-backed D1 with the same migrations the
+deployed database uses. That matters for the ingest: D1 caps a statement at 100
+bound parameters, and a mocked database would never surface it.
+
+Storage is isolated per test *file*, not per test, so cases that assert on row
+counts reset their tables in `beforeEach`.
 
 ## Version notes
 
