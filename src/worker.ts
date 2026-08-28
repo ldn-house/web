@@ -1,10 +1,31 @@
 import { handleRequest } from 'virtual:solid-ssr-handler';
 import { Hono } from 'hono';
-import { ingest } from './lib/ingest';
+import { BACKFILL_FLOOR, ingest } from './lib/ingest';
+import { type OctopusFixture, replayFetcher } from './lib/replay';
 
 const api = new Hono<{ Bindings: Env }>().basePath('/api');
 
 api.get('/health', (c) => c.json({ ok: true }));
+
+/**
+ * Loads a captured fixture through the real ingest, so preview deployments get
+ * data without a second write path that could drift from production's.
+ * Absent in production: without SEED_TOKEN the route does not exist.
+ */
+api.post('/seed', async (c) => {
+  const expected = c.env.SEED_TOKEN;
+  if (!expected) return c.notFound();
+  if (c.req.header('Authorization') !== `Bearer ${expected}`) {
+    return c.json({ error: 'unauthorized' }, 401);
+  }
+
+  const fixture = await c.req.json<OctopusFixture>();
+  const summary = await ingest(c.env, {
+    fetchImpl: replayFetcher(fixture),
+    since: BACKFILL_FLOOR,
+  });
+  return c.json(summary);
+});
 
 export default {
   fetch(request, env, ctx) {

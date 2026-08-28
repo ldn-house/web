@@ -8,7 +8,8 @@ export default defineConfig({
     // `external` hands the server environment to the Cloudflare plugin, which
     // builds its own rather than adopting Solid's `ssr` one.
     solid({ start: { external: true }, ssr: true }),
-    cloudflare(),
+    // CI points this at a generated per-PR config; defaults to wrangler.jsonc.
+    cloudflare({ configPath: process.env.WRANGLER_CONFIG }),
     tailwindcss(),
   ],
 });

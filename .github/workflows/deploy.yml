@@ -1,0 +1,113 @@
+name: Deploy
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    types: [opened, synchronize, reopened, closed]
+
+concurrency:
+  group: deploy-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+env:
+  CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+  CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+
+jobs:
+  check:
+    if: github.event.action != 'closed'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: "1.3.14"
+      - run: bun install --frozen-lockfile
+      - run: bun run typecheck
+      - run: bun run lint
+      - run: bun run test
+
+  preview:
+    if: github.event_name == 'pull_request' && github.event.action != 'closed'
+    needs: check
+    runs-on: ubuntu-latest
+    permissions:
+      pull-requests: write
+    steps:
+      - uses: actions/checkout@v4
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: "1.3.14"
+      - run: bun install --frozen-lockfile
+
+      - name: Provision database and preview config
+        run: bun scripts/preview/provision.ts
+        env:
+          PR_NUMBER: ${{ github.event.number }}
+          SEED_TOKEN: ${{ github.run_id }}-${{ github.run_attempt }}-${{ github.sha }}
+
+      # The Cloudflare plugin reads this and writes the matching deploy redirect,
+      # so the deploy below needs no --config of its own.
+      - name: Build
+        run: bun run build
+        env:
+          WRANGLER_CONFIG: wrangler.preview.json
+
+      - name: Deploy
+        id: deploy
+        run: |
+          bunx wrangler deploy | tee deploy.log
+          url=$(grep -oE 'https://[a-z0-9-]+\.[a-z0-9-]+\.workers\.dev' deploy.log | head -1)
+          echo "url=$url" >> "$GITHUB_OUTPUT"
+
+      - name: Seed from the captured fixture
+        run: |
+          curl --fail --silent --show-error \
+            -X POST "${{ steps.deploy.outputs.url }}/api/seed" \
+            -H "Authorization: Bearer $SEED_TOKEN" \
+            -H 'Content-Type: application/json' \
+            --data-binary @src/fixtures/octopus.json
+        env:
+          SEED_TOKEN: ${{ github.run_id }}-${{ github.run_attempt }}-${{ github.sha }}
+
+      - name: Comment the preview URL
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          gh pr comment ${{ github.event.number }} --edit-last --create-if-none --body \
+            "Preview: ${{ steps.deploy.outputs.url }} — seeded from \`src/fixtures/octopus.json\`, isolated database \`ldn-house-pr-${{ github.event.number }}\`."
+
+  production:
+    if: github.event_name == 'push'
+    needs: check
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: "1.3.14"
+      - run: bun install --frozen-lockfile
+
+      # Migrations run before the deploy, so new code never meets an old schema.
+      # Only safe while migrations stay additive; a destructive change needs
+      # expand/contract across two deploys.
+      - run: bun run db:migrate:remote
+        env:
+          CI: "true"
+
+      - run: bun run build
+      - run: bunx wrangler deploy
+
+  teardown:
+    if: github.event_name == 'pull_request' && github.event.action == 'closed'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: "1.3.14"
+      - run: bun install --frozen-lockfile
+      - run: bun scripts/preview/teardown.ts
+        env:
+          PR_NUMBER: ${{ github.event.number }}

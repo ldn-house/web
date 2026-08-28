@@ -49,6 +49,34 @@ Storage is isolated per test *file*, not per test, so cases that assert on row
 counts reset their tables in `beforeEach`. Use `bun run test` — a bare
 `bun test` invokes Bun's own runner, which cannot resolve `cloudflare:test`.
 
+## Deployment
+
+A single GitHub Actions workflow owns deploys; Workers Builds is disconnected so
+nothing deploys twice.
+
+| Trigger | Effect |
+|---|---|
+| Pull request | Provisions `ldn-house-pr-N` (database and Worker), migrates it, deploys, seeds from the fixture, comments the URL |
+| Push to `main` | Migrates the production database, then deploys |
+| Pull request closed | Deletes the PR's Worker and database |
+
+Previews get their own D1 so a PR never writes to production, and the generated
+config drops `routes` and `triggers` — a preview must not answer on
+preview.ldn.house, and every open PR running the ingest cron would hammer
+Octopus. Migrations run *before* the production deploy so new code never meets an
+old schema; that only holds while migrations stay additive, and a destructive
+change needs expand/contract across two deploys.
+
+`src/fixtures/octopus.json` is a scrubbed capture of the live API, regenerated
+with `bun scripts/capture-fixture.ts [days]`. Seeding posts it to `/api/seed`,
+which runs the ordinary `ingest()` against a replaying fetcher rather than a
+second write path — so previews exercise the same parsing, upserts and
+normalisation as production. The route does not exist without `SEED_TOKEN`,
+which is only set on previews.
+
+Required repository secrets: `CLOUDFLARE_ACCOUNT_ID`, and a `CLOUDFLARE_API_TOKEN`
+with Workers Scripts edit, D1 edit and Workers Routes edit.
+
 ## Version notes
 
 Solid 2 is at RC and moved things that Solid 1 guides still get wrong:
