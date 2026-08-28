@@ -1,11 +1,7 @@
-import { For } from 'solid-js';
+import { createMemo, For } from 'solid-js';
 import { linearScale, niceCeiling } from '../lib/chart';
-
-export interface Slot {
-  /** Start of the half-hour slot. */
-  start: Date;
-  kwh: number;
-}
+import { londonTime } from '../lib/format';
+import type { Slot } from '../lib/queries';
 
 const WIDTH = 720;
 const HEIGHT = 200;
@@ -13,9 +9,13 @@ const PAD = { top: 8, right: 8, bottom: 22, left: 32 };
 
 /** Bars live in the HTML, so the chart reads without JavaScript. */
 export function UsageChart(props: { slots: readonly Slot[] }) {
-  const peak = () => niceCeiling(Math.max(...props.slots.map((s) => s.kwh)));
-  const y = () => linearScale([0, peak()], [HEIGHT - PAD.bottom, PAD.top]);
-  const barWidth = () => (WIDTH - PAD.left - PAD.right) / Math.max(props.slots.length, 1);
+  // Memoised because each is read once per bar: recomputing would rescan
+  // every slot for each one.
+  const peak = createMemo(() => niceCeiling(Math.max(...props.slots.map((s) => s.kwh))));
+  const y = createMemo(() => linearScale([0, peak()], [HEIGHT - PAD.bottom, PAD.top]));
+  const barWidth = createMemo(
+    () => (WIDTH - PAD.left - PAD.right) / Math.max(props.slots.length, 1),
+  );
 
   return (
     <svg
@@ -60,7 +60,7 @@ export function UsageChart(props: { slots: readonly Slot[] }) {
               class="fill-accent/70"
             >
               <title>
-                {slot.start.toISOString().slice(11, 16)} — {slot.kwh.toFixed(2)} kWh
+                {londonTime(slot.start)} — {slot.kwh.toFixed(2)} kWh
               </title>
             </rect>
           );
