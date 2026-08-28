@@ -18,6 +18,13 @@ export interface RateSlot {
 
 const db = () => drizzle(env.DB, { schema });
 
+/**
+ * Octopus's Flexible product is the price-capped variable tariff. It cannot be
+ * read off `agreements` because the account has since moved to Agile.
+ */
+const CAP_TARIFF = 'E-1R-VAR-22-11-01-C';
+const CAP_PAYMENT_METHOD = 'DIRECT_DEBIT';
+
 /** Half-hourly readings for the `hours` before the newest reading, oldest first. */
 export async function recentConsumption(hours = 48): Promise<Slot[]> {
   const client = db();
@@ -72,4 +79,22 @@ export async function upcomingRates(from: string): Promise<RateSlot[]> {
     )
     .orderBy(asc(schema.unitRates.validFrom))
     .limit(96);
+}
+
+/** Unit price on the capped standard tariff at `at`, as a comparison line. */
+export async function cappedRate(at: string): Promise<number | null> {
+  const [rate] = await db()
+    .select({ pIncVat: schema.unitRates.pIncVat })
+    .from(schema.unitRates)
+    .where(
+      and(
+        eq(schema.unitRates.tariffCode, CAP_TARIFF),
+        eq(schema.unitRates.paymentMethod, CAP_PAYMENT_METHOD),
+        lte(schema.unitRates.validFrom, at),
+        or(isNull(schema.unitRates.validTo), gt(schema.unitRates.validTo, at)),
+      ),
+    )
+    .orderBy(desc(schema.unitRates.validFrom))
+    .limit(1);
+  return rate?.pIncVat ?? null;
 }
