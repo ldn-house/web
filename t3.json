@@ -1,0 +1,11 @@
+{
+  "$schema": "https://t3.codes/schema/t3.json",
+  "scripts": [
+    {
+      "name": "Setup Worktree",
+      "command": "cp \"$T3CODE_PROJECT_ROOT/.dev.vars\" .dev.vars && bun install --frozen-lockfile --prefer-offline",
+      "icon": "configure",
+      "runOnWorktreeCreate": true
+    }
+  ]
+}
