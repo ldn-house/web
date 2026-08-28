@@ -12,7 +12,7 @@ ingest is not wired up yet.
 
 ```bash
 bun dev         # Vite dev server, pages rendered in workerd
-bun run build   # client -> dist/client, worker -> dist/ldn_house_web
+bun run build   # client -> dist/client, worker -> dist/ldn_house
 bun run preview # build, then serve the production artifact in workerd
 bun run deploy  # build and wrangler deploy
 bun typecheck

@@ -1,6 +1,6 @@
 {
   "$schema": "./node_modules/wrangler/config-schema.json",
-  "name": "ldn-house-web",
+  "name": "ldn-house",
   "main": "./src/worker.ts",
   "compatibility_date": "2026-08-28",
   "compatibility_flags": ["nodejs_compat"],
@@ -8,5 +8,24 @@
     "directory": "./dist/client",
     "binding": "ASSETS"
   },
-  "observability": { "enabled": true }
+  "routes": [{ "pattern": "preview.ldn.house", "custom_domain": true }],
+  // Mirrors what the dashboard reports, so Workers Builds stops flagging drift.
+  // The top-level `enabled` is the legacy switch, superseded by logs/traces.
+  // `redact_query_string` is omitted: the dashboard emits it but wrangler 4.127
+  // rejects it as unknown, and `false` is the default.
+  "observability": {
+    "enabled": false,
+    "head_sampling_rate": 1,
+    "logs": {
+      "enabled": true,
+      "head_sampling_rate": 1,
+      "persist": true,
+      "invocation_logs": true
+    },
+    "traces": {
+      "enabled": true,
+      "persist": true,
+      "head_sampling_rate": 1
+    }
+  }
 }
