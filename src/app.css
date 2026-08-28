@@ -1,0 +1,8 @@
+@import "tailwindcss";
+
+@theme {
+  --font-sans: ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif;
+  --color-surface: oklch(0.18 0.012 260);
+  --color-surface-raised: oklch(0.23 0.014 260);
+  --color-accent: oklch(0.78 0.16 85);
+}
