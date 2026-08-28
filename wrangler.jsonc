@@ -8,13 +8,17 @@
     "directory": "./dist/client",
     "binding": "ASSETS"
   },
-  "routes": [{ "pattern": "preview.ldn.house", "custom_domain": true }],
+  "routes": [
+    {
+      "pattern": "preview.ldn.house",
+      "custom_domain": true
+    }
+  ],
   "d1_databases": [
     {
       "binding": "DB",
       "database_name": "ldn-house",
-      // Placeholder until the database is created; local dev ignores it.
-      "database_id": "00000000-0000-0000-0000-000000000000",
+      "database_id": "bd094337-9100-4beb-b0ab-7cc63d6afaed",
       "migrations_dir": "drizzle"
     }
   ],
