@@ -1,44 +1,49 @@
 import { createMemo, For, Show } from 'solid-js';
-import { linearScale, niceCeiling, stepPath, tickIndices, ticks } from '../lib/chart';
-import { axisTicks, londonTime } from '../lib/format';
+import { linearScale, niceCeiling, stepPath, ticks } from '../lib/chart';
+import { londonTime } from '../lib/format';
 import type { RateSlot } from '../lib/queries';
+import { PAD, TimeAxis, WIDTH, type Window } from './TimeAxis';
 
-const WIDTH = 720;
 const HEIGHT = 220;
-const PAD = { top: 10, right: 8, bottom: 24, left: 38 };
+const SLOT_MS = 30 * 60_000;
 
-export function RateChart(props: { rates: readonly RateSlot[]; cap: number | null }) {
+export function RateChart(props: {
+  rates: readonly RateSlot[];
+  cap: number | null;
+  window: Window;
+}) {
   const prices = createMemo(() => props.rates.map((r) => r.pIncVat));
-  const top = createMemo(() => niceCeiling(Math.max(...prices(), props.cap ?? 0)));
+  const top = createMemo(() => niceCeiling(Math.max(...prices(), props.cap ?? 0, 1)));
   const bottom = createMemo(() => Math.min(...prices(), 0));
 
   const y = createMemo(() =>
     linearScale([bottom(), top()], [HEIGHT - PAD.bottom, PAD.top]),
   );
   const x = createMemo(() =>
-    linearScale([0, Math.max(props.rates.length, 1)], [PAD.left, WIDTH - PAD.right]),
-  );
-
-  const xTicks = createMemo(() =>
-    axisTicks(
-      props.rates.map((r) => r.start),
-      tickIndices(props.rates.length, 6),
+    linearScale(
+      [Date.parse(props.window.from), Date.parse(props.window.to)],
+      [PAD.left, WIDTH - PAD.right],
     ),
   );
+  const slotWidth = createMemo(() => x()(SLOT_MS) - x()(0));
 
-  const line = createMemo(() =>
-    stepPath(
-      props.rates.map((rate, i) => ({ x: x()(i), y: y()(rate.pIncVat) })),
-      WIDTH - PAD.right,
-    ),
-  );
+  const line = createMemo(() => {
+    const last = props.rates.at(-1);
+    return stepPath(
+      props.rates.map((rate) => ({
+        x: x()(Date.parse(rate.start)),
+        y: y()(rate.pIncVat),
+      })),
+      last ? x()(Date.parse(last.start) + SLOT_MS) : PAD.left,
+    );
+  });
 
   return (
     <svg
       viewBox={`0 0 ${WIDTH} ${HEIGHT}`}
       class="w-full"
       role="img"
-      aria-label="Upcoming Agile unit rates against the capped standard tariff"
+      aria-label="Agile unit rates against the capped standard tariff"
     >
       <For each={ticks(top(), 5)}>
         {(value) => (
@@ -63,18 +68,7 @@ export function RateChart(props: { rates: readonly RateSlot[]; cap: number | nul
         )}
       </For>
 
-      <For each={xTicks()}>
-        {(tick) => (
-          <text
-            x={x()(tick.index)}
-            y={HEIGHT - 8}
-            text-anchor="middle"
-            class="fill-neutral-500 text-[10px]"
-          >
-            {tick.day ? `${tick.day} ${tick.time}` : tick.time}
-          </text>
-        )}
-      </For>
+      <TimeAxis window={props.window} x={x()} height={HEIGHT} />
 
       <Show when={props.cap}>
         {(cap) => (
@@ -107,13 +101,12 @@ export function RateChart(props: { rates: readonly RateSlot[]; cap: number | nul
         class="text-accent"
       />
 
-      {/* Invisible hit areas so every slot keeps a native tooltip. */}
       <For each={props.rates}>
-        {(rate, index) => (
+        {(rate) => (
           <rect
-            x={x()(index())}
+            x={x()(Date.parse(rate.start))}
             y={PAD.top}
-            width={x()(1) - x()(0)}
+            width={slotWidth()}
             height={HEIGHT - PAD.bottom - PAD.top}
             fill="transparent"
           >

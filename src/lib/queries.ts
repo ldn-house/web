@@ -1,7 +1,7 @@
 'use server';
 
 import { env } from 'cloudflare:workers';
-import { and, asc, desc, eq, gt, gte, isNull, lte, or } from 'drizzle-orm';
+import { and, asc, desc, eq, gt, gte, isNull, lt, lte, or } from 'drizzle-orm';
 import { drizzle } from 'drizzle-orm/d1';
 import * as schema from '../db/schema';
 
@@ -25,20 +25,16 @@ const db = () => drizzle(env.DB, { schema });
 const CAP_TARIFF = 'E-1R-VAR-22-11-01-C';
 const CAP_PAYMENT_METHOD = 'DIRECT_DEBIT';
 
-export async function recentConsumption(hours = 48): Promise<Slot[]> {
-  const client = db();
-  const [latest] = await client
-    .select({ intervalEnd: schema.consumption.intervalEnd })
-    .from(schema.consumption)
-    .orderBy(desc(schema.consumption.intervalEnd))
-    .limit(1);
-  if (!latest) return [];
-
-  const from = new Date(Date.parse(latest.intervalEnd) - hours * 3600_000).toISOString();
-  return client
+export async function consumptionBetween(from: string, to: string): Promise<Slot[]> {
+  return db()
     .select({ start: schema.consumption.intervalStart, kwh: schema.consumption.kwh })
     .from(schema.consumption)
-    .where(gte(schema.consumption.intervalStart, from))
+    .where(
+      and(
+        gte(schema.consumption.intervalStart, from),
+        lt(schema.consumption.intervalStart, to),
+      ),
+    )
     .orderBy(asc(schema.consumption.intervalStart));
 }
 
@@ -57,8 +53,7 @@ async function tariffInForce(at: string): Promise<string | null> {
   return agreement?.tariffCode ?? null;
 }
 
-/** Agile publishes tomorrow's prices mid-afternoon, so this runs past now. */
-export async function upcomingRates(from: string): Promise<RateSlot[]> {
+export async function ratesBetween(from: string, to: string): Promise<RateSlot[]> {
   const tariffCode = await tariffInForce(new Date().toISOString());
   if (!tariffCode) return [];
 
@@ -69,10 +64,10 @@ export async function upcomingRates(from: string): Promise<RateSlot[]> {
       and(
         eq(schema.unitRates.tariffCode, tariffCode),
         gte(schema.unitRates.validFrom, from),
+        lt(schema.unitRates.validFrom, to),
       ),
     )
-    .orderBy(asc(schema.unitRates.validFrom))
-    .limit(96);
+    .orderBy(asc(schema.unitRates.validFrom));
 }
 
 export async function cappedRate(at: string): Promise<number | null> {
