@@ -75,13 +75,22 @@ jobs:
           echo "preview did not become reachable within 60s" >&2
           exit 1
 
+      # A 401 here means the previous deployment, with the old token, is still
+      # answering; the new version can take a little while to propagate.
       - name: Seed from the captured fixture
         run: |
-          curl --fail --silent --show-error \
-            -X POST "${{ steps.deploy.outputs.url }}/api/seed" \
-            -H "Authorization: Bearer $SEED_TOKEN" \
-            -H 'Content-Type: application/json' \
-            --data-binary @src/fixtures/octopus.json
+          for _ in $(seq 1 20); do
+            status=$(curl --silent --output seed.out --write-out '%{http_code}' \
+              -X POST "${{ steps.deploy.outputs.url }}/api/seed" \
+              -H "Authorization: Bearer $SEED_TOKEN" \
+              -H 'Content-Type: application/json' \
+              --data-binary @src/fixtures/octopus.json)
+            if [ "$status" = "200" ]; then cat seed.out; exit 0; fi
+            if [ "$status" != "401" ]; then echo "seed failed with $status"; cat seed.out; exit 1; fi
+            sleep 3
+          done
+          echo "previous deployment still serving after 60s" >&2
+          exit 1
 
       - name: Comment the preview URL
         env:
