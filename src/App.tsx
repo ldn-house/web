@@ -62,7 +62,7 @@ export default function App() {
       </p>
 
       <Panel
-        title="Consumption"
+        title="Electricity consumption"
         aside={slots().length ? `${total().toFixed(1)} kWh` : undefined}
       >
         <Show
@@ -78,7 +78,7 @@ export default function App() {
       </Panel>
 
       <Panel
-        title="Agile unit rate"
+        title="Electricity unit rate"
         aside={current() ? `${current()!.pIncVat.toFixed(2)}p/kWh now` : undefined}
       >
         <Show
@@ -95,7 +95,7 @@ export default function App() {
               {(value) => (
                 <li class="flex items-center gap-2">
                   <span class="inline-block h-0 w-5 border-t border-dashed border-sky-400" />
-                  Price cap {value().toFixed(1)}p/kWh
+                  Price cap (SVT) {value().toFixed(1)}p/kWh
                 </li>
               )}
             </Show>
