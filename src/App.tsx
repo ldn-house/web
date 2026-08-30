@@ -63,7 +63,11 @@ export default function App() {
 
       <Panel
         title="Electricity consumption"
-        aside={slots().length ? `${total().toFixed(1)} kWh` : undefined}
+        aside={
+          slots().length
+            ? `${total().toFixed(1)} kWh since ${londonDay(window.from)}`
+            : undefined
+        }
       >
         <Show
           when={slots().length}
