@@ -92,7 +92,11 @@ export async function cappedRate(at: string): Promise<number | null> {
  * the billing feed has not delivered yet. The bucket containing `now` is still
  * filling and is left out.
  */
-export async function telemetryBetween(from: string, to: string): Promise<Slot[]> {
+export async function telemetryBetween(
+  from: string,
+  to: string,
+  now = Date.now(),
+): Promise<Slot[]> {
   const rows = await db()
     .select({ readAt: schema.telemetry.readAt, registerWh: schema.telemetry.registerWh })
     .from(schema.telemetry)
@@ -107,7 +111,7 @@ export async function telemetryBetween(from: string, to: string): Promise<Slot[]
     )
     .orderBy(asc(schema.telemetry.readAt));
 
-  const cutoff = Date.now() - 1800_000;
+  const cutoff = now - 1800_000;
   const slots: Slot[] = [];
   for (let i = 1; i < rows.length; i += 1) {
     const row = rows[i]!;
@@ -120,11 +124,15 @@ export async function telemetryBetween(from: string, to: string): Promise<Slot[]
   return slots;
 }
 
-export async function latestDemand(): Promise<{ readAt: string; watts: number } | null> {
+/** Null once the Home Mini has gone quiet: buckets are half-hourly, so 45 minutes is a missed one. */
+export async function latestDemand(
+  now = Date.now(),
+): Promise<{ readAt: string; watts: number } | null> {
   const [row] = await db()
     .select({ readAt: schema.telemetry.readAt, watts: schema.telemetry.demandW })
     .from(schema.telemetry)
     .orderBy(desc(schema.telemetry.readAt))
     .limit(1);
-  return row ?? null;
+  if (!row || now - Date.parse(row.readAt) > 45 * 60_000) return null;
+  return row;
 }

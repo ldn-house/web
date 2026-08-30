@@ -21,6 +21,7 @@ interface FakeApi {
   rates: Rate[];
   standing: Rate[];
   telemetry?: { readAt: string; demand: string; consumption: string }[];
+  telemetryError?: boolean;
 }
 
 function fakeOctopus(api: FakeApi) {
@@ -45,6 +46,10 @@ function fakeOctopus(api: FakeApi) {
       }
       if (query?.includes('smartMeterTelemetry')) {
         asked.telemetry!.push(url.pathname);
+        if (api.telemetryError)
+          return json({
+            errors: [{ message: 'Unable to query smart meter telemetry data.' }],
+          });
         return json({ data: { smartMeterTelemetry: api.telemetry ?? [] } });
       }
       if (query?.includes('smartDevices')) {
@@ -278,6 +283,23 @@ describe('ingest against D1', () => {
       demand_w: 500,
       register_wh: 1250,
     });
+  });
+
+  it('skips telemetry without a Home Mini and still ingests billing data', async () => {
+    const second = fakeOctopus(api);
+    const summary = await ingest(env, { fetchImpl: second.fetchImpl });
+    expect(summary.telemetryRows).toBe(0);
+    expect(second.asked.telemetry).toEqual([]);
+    expect(await count('consumption')).toBe(240);
+  });
+
+  it('keeps the billing ingest when the telemetry query fails', async () => {
+    api.telemetry = [];
+    api.telemetryError = true;
+    const summary = await ingest(env, { fetchImpl: fakeOctopus(api).fetchImpl });
+    expect(summary.consumptionRows).toBe(240);
+    expect(summary.telemetryRows).toBe(0);
+    expect(await count('consumption')).toBe(240);
   });
 
   it('normalises BST readings to UTC before storing them', async () => {

@@ -1,6 +1,11 @@
 import { env } from 'cloudflare:test';
 import { beforeEach, describe, expect, it } from 'vitest';
-import { consumptionBetween, ratesBetween } from './queries';
+import {
+  consumptionBetween,
+  latestDemand,
+  ratesBetween,
+  telemetryBetween,
+} from './queries';
 
 const AGILE = 'E-1R-AGILE-24-10-01-C';
 const FLEXIBLE = 'E-1R-VAR-22-11-01-C';
@@ -20,6 +25,7 @@ describe('queries', () => {
       env.DB.prepare('DELETE FROM consumption'),
       env.DB.prepare('DELETE FROM unit_rates'),
       env.DB.prepare('DELETE FROM agreements'),
+      env.DB.prepare('DELETE FROM telemetry'),
     ]);
   });
 
@@ -86,5 +92,46 @@ describe('queries', () => {
 
   it('returns nothing when no agreement covers now', async () => {
     expect(await ratesBetween(new Date().toISOString(), FAR_FUTURE)).toEqual([]);
+  });
+
+  it('derives half-hourly kWh from register deltas and drops the bucket still filling', async () => {
+    const t0 = Date.parse('2026-01-06T00:00:00Z');
+    for (const [i, register] of [1000, 1250, 1600, 1700].entries()) {
+      await seed(
+        'INSERT INTO telemetry (read_at, demand_w, register_wh) VALUES (?,?,?)',
+        iso(t0 + i * 1800_000),
+        400,
+        register,
+      );
+    }
+    // "Now" is inside the last bucket, so it is excluded; the first row only anchors the deltas.
+    const slots = await telemetryBetween(
+      '2026-01-06T00:00:00Z',
+      '2026-01-07T00:00:00Z',
+      t0 + 3 * 1800_000 + 60_000,
+    );
+    expect(slots).toEqual([
+      { start: '2026-01-06T00:30:00Z', kwh: 0.25 },
+      { start: '2026-01-06T01:00:00Z', kwh: 0.35 },
+    ]);
+  });
+
+  it('reports demand only while the Home Mini is fresh', async () => {
+    const readAt = '2026-01-06T00:00:00Z';
+    await seed(
+      'INSERT INTO telemetry (read_at, demand_w, register_wh) VALUES (?,?,?)',
+      readAt,
+      660,
+      1000,
+    );
+    expect(await latestDemand(Date.parse(readAt) + 30 * 60_000)).toEqual({
+      readAt,
+      watts: 660,
+    });
+    expect(await latestDemand(Date.parse(readAt) + 60 * 60_000)).toBeNull();
+  });
+
+  it('returns no demand when there is no telemetry', async () => {
+    expect(await latestDemand()).toBeNull();
   });
 });
