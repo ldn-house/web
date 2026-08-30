@@ -1,15 +1,15 @@
 import type { JSX } from '@solidjs/web';
 import { createMemo, Show } from 'solid-js';
 import { RateChart } from './components/RateChart';
+import type { Window } from './components/TimeAxis';
 import { UsageChart } from './components/UsageChart';
-import { londonDay, londonTime } from './lib/format';
-import { cappedRate, recentConsumption, upcomingRates } from './lib/queries';
-
-function currentSlotStart(now = new Date()): string {
-  const floored = new Date(now);
-  floored.setUTCMinutes(now.getUTCMinutes() < 30 ? 0 : 30, 0, 0);
-  return floored.toISOString().replace(/\.\d{3}Z$/, 'Z');
-}
+import { addLondonDays, londonDay, londonMidnight, londonTime } from './lib/format';
+import {
+  cappedRate,
+  consumptionBetween,
+  type RateSlot,
+  ratesBetween,
+} from './lib/queries';
 
 function Panel(props: { title: string; aside?: string; children: JSX.Element }) {
   return (
@@ -26,12 +26,33 @@ function Panel(props: { title: string; aside?: string; children: JSX.Element }) 
 }
 
 export default function App() {
-  const slots = createMemo(async () => recentConsumption(48));
-  const rates = createMemo(async () => upcomingRates(currentSlotStart()));
-  const cap = createMemo(async () => cappedRate(new Date().toISOString()));
+  // Whole London days, from the day before yesterday to the end of tomorrow.
+  // Readings lag by up to two days and rates run a day ahead, so one window
+  // covers both and the charts share an axis.
+  const now = new Date().toISOString();
+  const today = londonMidnight(now);
+  const window: Window = {
+    from: addLondonDays(today, -2),
+    to: addLondonDays(today, 2),
+    now,
+  };
+
+  const slots = createMemo(async () => consumptionBetween(window.from, window.to));
+  const rates = createMemo(async () => ratesBetween(window.from, window.to));
+  const cap = createMemo(async () => cappedRate(now));
 
   const total = () => slots().reduce((sum, slot) => sum + slot.kwh, 0);
-  const now = () => rates()[0];
+  const current = () =>
+    rates().find(
+      (r) => r.start <= now && Date.parse(r.start) + 1_800_000 > Date.parse(now),
+    );
+  const cheapestAhead = () =>
+    rates()
+      .filter((r) => r.start >= now)
+      .reduce<RateSlot | undefined>(
+        (best, r) => (!best || r.pIncVat < best.pIncVat ? r : best),
+        undefined,
+      );
 
   return (
     <main class="mx-auto max-w-3xl px-6 py-16">
@@ -40,32 +61,39 @@ export default function App() {
         Energy and climate data for one house in London.
       </p>
 
-      <Panel title="Last 48 hours" aside={`${total().toFixed(1)} kWh`}>
+      <Panel
+        title="Consumption"
+        aside={slots().length ? `${total().toFixed(1)} kWh` : undefined}
+      >
         <Show
           when={slots().length}
           fallback={<p class="text-sm text-neutral-500">No readings yet.</p>}
         >
-          <UsageChart slots={slots()} />
+          <UsageChart slots={slots()} window={window} />
           <p class="mt-3 text-xs text-neutral-500">
-            {londonDay(slots()[0]!.start)} {londonTime(slots()[0]!.start)} —{' '}
-            {londonDay(slots().at(-1)!.start)} {londonTime(slots().at(-1)!.start)}
+            Latest reading {londonDay(slots().at(-1)!.start)}{' '}
+            {londonTime(slots().at(-1)!.start)}
           </p>
         </Show>
       </Panel>
 
       <Panel
-        title="Agile rates from now"
-        aside={now() ? `${now()!.pIncVat.toFixed(2)}p/kWh` : undefined}
+        title="Agile unit rate"
+        aside={current() ? `${current()!.pIncVat.toFixed(2)}p/kWh now` : undefined}
       >
         <Show
           when={rates().length}
           fallback={<p class="text-sm text-neutral-500">No rates published.</p>}
         >
-          <RateChart rates={rates()} cap={cap()} />
-          <p class="mt-3 text-xs text-neutral-500">
-            Cheapest {Math.min(...rates().map((r) => r.pIncVat)).toFixed(2)}p at{' '}
-            {londonTime(rates().reduce((a, b) => (b.pIncVat < a.pIncVat ? b : a)).start)}
-          </p>
+          <RateChart rates={rates()} cap={cap()} window={window} />
+          <Show when={cheapestAhead()}>
+            {(slot) => (
+              <p class="mt-3 text-xs text-neutral-500">
+                Cheapest ahead {slot().pIncVat.toFixed(2)}p at {londonDay(slot().start)}{' '}
+                {londonTime(slot().start)}
+              </p>
+            )}
+          </Show>
         </Show>
       </Panel>
     </main>

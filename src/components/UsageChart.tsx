@@ -1,24 +1,24 @@
 import { createMemo, For } from 'solid-js';
-import { linearScale, niceCeiling, tickIndices, ticks } from '../lib/chart';
-import { axisTicks, londonTime } from '../lib/format';
+import { linearScale, niceCeiling, ticks } from '../lib/chart';
+import { londonTime } from '../lib/format';
 import type { Slot } from '../lib/queries';
+import { PAD, TimeAxis, WIDTH, type Window } from './TimeAxis';
 
-const WIDTH = 720;
 const HEIGHT = 220;
-const PAD = { top: 10, right: 8, bottom: 24, left: 38 };
+const SLOT_MS = 30 * 60_000;
 
-export function UsageChart(props: { slots: readonly Slot[] }) {
-  const peak = createMemo(() => niceCeiling(Math.max(...props.slots.map((s) => s.kwh))));
-  const y = createMemo(() => linearScale([0, peak()], [HEIGHT - PAD.bottom, PAD.top]));
-  const barWidth = createMemo(
-    () => (WIDTH - PAD.left - PAD.right) / Math.max(props.slots.length, 1),
+export function UsageChart(props: { slots: readonly Slot[]; window: Window }) {
+  const peak = createMemo(() =>
+    niceCeiling(Math.max(0, ...props.slots.map((s) => s.kwh))),
   );
-  const xTicks = createMemo(() =>
-    axisTicks(
-      props.slots.map((s) => s.start),
-      tickIndices(props.slots.length, 6),
+  const y = createMemo(() => linearScale([0, peak()], [HEIGHT - PAD.bottom, PAD.top]));
+  const x = createMemo(() =>
+    linearScale(
+      [Date.parse(props.window.from), Date.parse(props.window.to)],
+      [PAD.left, WIDTH - PAD.right],
     ),
   );
+  const barWidth = createMemo(() => x()(SLOT_MS) - x()(0));
 
   return (
     <svg
@@ -27,7 +27,6 @@ export function UsageChart(props: { slots: readonly Slot[] }) {
       role="img"
       aria-label="Half-hourly electricity consumption"
     >
-      {/* No root <title>: it would tooltip the gaps between bars too. */}
       <For each={ticks(peak(), 4)}>
         {(value) => (
           <>
@@ -51,28 +50,16 @@ export function UsageChart(props: { slots: readonly Slot[] }) {
         )}
       </For>
 
-      <For each={xTicks()}>
-        {(tick) => (
-          <text
-            x={PAD.left + tick.index * barWidth()}
-            y={HEIGHT - 8}
-            text-anchor="middle"
-            class="fill-neutral-500 text-[10px]"
-          >
-            {tick.day ? `${tick.day} ${tick.time}` : tick.time}
-          </text>
-        )}
-      </For>
+      <TimeAxis window={props.window} x={x()} height={HEIGHT} />
 
       <For each={props.slots}>
-        {(slot, index) => {
-          const left = () => PAD.left + index() * barWidth();
+        {(slot) => {
           const top = () => y()(slot.kwh);
           return (
             <rect
-              x={left()}
+              x={x()(Date.parse(slot.start))}
               y={top()}
-              width={Math.max(barWidth() - 1, 1)}
+              width={Math.max(barWidth() - 0.5, 0.5)}
               height={HEIGHT - PAD.bottom - top()}
               class="fill-accent/70"
             >
