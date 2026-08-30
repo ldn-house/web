@@ -49,16 +49,12 @@ export function TimeAxis(props: { window: Window; x: Scale; height: number }) {
           y1={PAD.top}
           y2={props.height - PAD.bottom}
           stroke="currentColor"
-          stroke-dasharray="2 3"
           class="text-emerald-400/70"
         />
-        <text
-          x={at(props.window.now) + 3}
-          y={PAD.top + 9}
-          class="fill-emerald-400/80 text-[10px]"
-        >
-          now
-        </text>
+        <polygon
+          points={`${at(props.window.now) - 4},${PAD.top - 6} ${at(props.window.now) + 4},${PAD.top - 6} ${at(props.window.now)},${PAD.top}`}
+          class="fill-emerald-400/80"
+        />
       </Show>
     </>
   );
