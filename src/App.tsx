@@ -50,6 +50,11 @@ export default function App() {
     return telemetryBetween(from, window.to);
   });
   const demand = createMemo(async () => latestDemand());
+  // Half-hourly buckets, so anything older than one and a bit is the Mini gone quiet.
+  const liveDemand = () => {
+    const d = demand();
+    return d && Date.parse(now) - Date.parse(d.readAt) < 45 * 60_000 ? d : null;
+  };
   const rates = createMemo(async () => ratesBetween(window.from, window.to));
   const cap = createMemo(async () => cappedRate(now));
 
@@ -76,7 +81,7 @@ export default function App() {
 
       <Panel
         title="Electricity consumption"
-        aside={demand() ? `${demand()!.watts.toFixed(0)} W now` : undefined}
+        aside={liveDemand() ? `${liveDemand()!.watts.toFixed(0)} W now` : undefined}
       >
         <Show
           when={slots().length + estimated().length}

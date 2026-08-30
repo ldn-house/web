@@ -249,32 +249,37 @@ export async function ingest(
     }
   }
 
-  const deviceId = await discoverDeviceId(key, accountNumber, fetchImpl);
-  if (deviceId) {
-    const [mark] = await db
-      .select({ latest: sql<string | null>`max(${schema.telemetry.readAt})` })
-      .from(schema.telemetry);
-    const start = mark?.latest
-      ? toUtcIso(new Date(Date.parse(mark.latest) - 24 * 3_600_000).toISOString())
-      : toUtcIso(new Date(Date.now() - 3 * 24 * 3_600_000).toISOString());
-    const readings = await fetchTelemetry(
-      key,
-      deviceId,
-      start,
-      toUtcIso(new Date().toISOString()),
-      fetchImpl,
-    );
-    summary.telemetryRows += await upsertAll(
-      db,
-      schema.telemetry,
-      readings.map((r) => ({
-        readAt: toUtcIso(r.readAt),
-        demandW: Number(r.demand),
-        registerWh: Number(r.consumption),
-      })),
-      [schema.telemetry.readAt],
-      ['demandW', 'registerWh'],
-    );
+  // Secondary feed: a failure here must not mark the billing ingest as failed.
+  try {
+    const deviceId = await discoverDeviceId(key, accountNumber, fetchImpl);
+    if (deviceId) {
+      const [mark] = await db
+        .select({ latest: sql<string | null>`max(${schema.telemetry.readAt})` })
+        .from(schema.telemetry);
+      const start = mark?.latest
+        ? toUtcIso(new Date(Date.parse(mark.latest) - 24 * 3_600_000).toISOString())
+        : toUtcIso(new Date(Date.now() - 3 * 24 * 3_600_000).toISOString());
+      const readings = await fetchTelemetry(
+        key,
+        deviceId,
+        start,
+        toUtcIso(new Date().toISOString()),
+        fetchImpl,
+      );
+      summary.telemetryRows += await upsertAll(
+        db,
+        schema.telemetry,
+        readings.map((r) => ({
+          readAt: toUtcIso(r.readAt),
+          demandW: Number(r.demand),
+          registerWh: Number(r.consumption),
+        })),
+        [schema.telemetry.readAt],
+        ['demandW', 'registerWh'],
+      );
+    }
+  } catch (error) {
+    console.warn('telemetry ingest skipped', error);
   }
 
   return summary;
