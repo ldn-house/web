@@ -20,13 +20,18 @@ interface FakeApi {
   readings: { interval_start: string; interval_end: string; consumption: number }[];
   rates: Rate[];
   standing: Rate[];
+  telemetry?: { readAt: string; demand: string; consumption: string }[];
 }
 
 function fakeOctopus(api: FakeApi) {
-  const asked: Record<string, string[]> = { consumption: [], rates: [], standing: [] };
-  let tokenIssued = false;
+  const asked: Record<string, string[]> = {
+    consumption: [],
+    rates: [],
+    standing: [],
+    telemetry: [],
+  };
 
-  const fetchImpl = (async (input: string | URL | Request) => {
+  const fetchImpl = (async (input: string | URL | Request, init?: RequestInit) => {
     const url = new URL(typeof input === 'string' ? input : input.toString());
     const json = (body: unknown) =>
       new Response(JSON.stringify(body), {
@@ -34,9 +39,25 @@ function fakeOctopus(api: FakeApi) {
       });
 
     if (url.pathname === '/v1/graphql/') {
-      if (!tokenIssued) {
-        tokenIssued = true;
+      const { query } = JSON.parse(String(init?.body ?? '{}')) as { query?: string };
+      if (query?.includes('obtainKrakenToken')) {
         return json({ data: { obtainKrakenToken: { token: 'synthetic-token' } } });
+      }
+      if (query?.includes('smartMeterTelemetry')) {
+        asked.telemetry!.push(url.pathname);
+        return json({ data: { smartMeterTelemetry: api.telemetry ?? [] } });
+      }
+      if (query?.includes('smartDevices')) {
+        const devices = api.telemetry ? [{ deviceId: 'SYNTH-DEVICE' }] : [];
+        return json({
+          data: {
+            account: {
+              electricityAgreements: [
+                { meterPoint: { meters: [{ smartDevices: devices }] } },
+              ],
+            },
+          },
+        });
       }
       return json({ data: { viewer: { accounts: [{ number: 'A-SYNTH01' }] } } });
     }
@@ -125,6 +146,7 @@ describe('ingest against D1', () => {
       env.DB.prepare('DELETE FROM unit_rates'),
       env.DB.prepare('DELETE FROM standing_charges'),
       env.DB.prepare('DELETE FROM agreements'),
+      env.DB.prepare('DELETE FROM telemetry'),
     ]);
 
     api = {
@@ -239,6 +261,23 @@ describe('ingest against D1', () => {
 
     expect(second.asked.standing![0]).toBe('2020-01-01T00:00:00Z');
     expect(await count('standing_charges')).toBe(4);
+  });
+
+  it('stores Home Mini telemetry when the account has a device', async () => {
+    api.telemetry = [
+      { readAt: '2026-01-06T00:00:00+00:00', demand: '400', consumption: '1000' },
+      { readAt: '2026-01-06T00:30:00+00:00', demand: '500', consumption: '1250' },
+    ];
+    const summary = await ingest(env, { fetchImpl: fakeOctopus(api).fetchImpl });
+    expect(summary.telemetryRows).toBe(2);
+    const row = await env.DB.prepare(
+      'SELECT read_at, demand_w, register_wh FROM telemetry ORDER BY read_at DESC LIMIT 1',
+    ).first();
+    expect(row).toEqual({
+      read_at: '2026-01-06T00:30:00Z',
+      demand_w: 500,
+      register_wh: 1250,
+    });
   });
 
   it('normalises BST readings to UTC before storing them', async () => {

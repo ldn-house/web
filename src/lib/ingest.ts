@@ -3,10 +3,12 @@ import { type DrizzleD1Database, drizzle } from 'drizzle-orm/d1';
 import * as schema from '../db/schema';
 import {
   discoverAccountNumber,
+  discoverDeviceId,
   type Fetcher,
   fetchAccount,
   fetchConsumption,
   fetchStandingCharges,
+  fetchTelemetry,
   fetchUnitRates,
   type RatePeriod,
 } from './octopus';
@@ -30,6 +32,7 @@ export interface IngestSummary {
   unitRateRows: number;
   standingChargeRows: number;
   agreementRows: number;
+  telemetryRows: number;
   consumptionSince: string;
 }
 
@@ -145,6 +148,7 @@ export async function ingest(
     unitRateRows: 0,
     standingChargeRows: 0,
     agreementRows: 0,
+    telemetryRows: 0,
     consumptionSince,
   };
 
@@ -243,6 +247,34 @@ export async function ingest(
         rateColumns,
       );
     }
+  }
+
+  const deviceId = await discoverDeviceId(key, accountNumber, fetchImpl);
+  if (deviceId) {
+    const [mark] = await db
+      .select({ latest: sql<string | null>`max(${schema.telemetry.readAt})` })
+      .from(schema.telemetry);
+    const start = mark?.latest
+      ? toUtcIso(new Date(Date.parse(mark.latest) - 24 * 3_600_000).toISOString())
+      : toUtcIso(new Date(Date.now() - 3 * 24 * 3_600_000).toISOString());
+    const readings = await fetchTelemetry(
+      key,
+      deviceId,
+      start,
+      toUtcIso(new Date().toISOString()),
+      fetchImpl,
+    );
+    summary.telemetryRows += await upsertAll(
+      db,
+      schema.telemetry,
+      readings.map((r) => ({
+        readAt: toUtcIso(r.readAt),
+        demandW: Number(r.demand),
+        registerWh: Number(r.consumption),
+      })),
+      [schema.telemetry.readAt],
+      ['demandW', 'registerWh'],
+    );
   }
 
   return summary;

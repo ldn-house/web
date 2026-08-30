@@ -8,6 +8,7 @@ export interface OctopusFixture {
   consumption: { interval_start: string; interval_end: string; consumption: number }[];
   unitRates: Record<string, unknown[]>;
   standingCharges: Record<string, unknown[]>;
+  telemetry?: { readAt: string; demand: string; consumption: string }[];
 }
 
 /** Serves a fixture over the live API's request shapes, so seeding runs the real ingest. */
