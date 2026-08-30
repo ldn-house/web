@@ -70,6 +70,14 @@ export function RateChart(props: {
 
       <TimeAxis window={props.window} x={x()} height={HEIGHT} />
 
+      <path
+        d={line()}
+        fill="none"
+        stroke="currentColor"
+        stroke-width="2"
+        class="text-accent"
+      />
+
       <Show when={props.cap}>
         {(cap) => (
           <>
@@ -80,26 +88,11 @@ export function RateChart(props: {
               y2={y()(cap())}
               stroke="currentColor"
               stroke-dasharray="4 3"
-              class="text-neutral-400"
+              class="text-sky-400"
             />
-            <text
-              x={PAD.left + 4}
-              y={y()(cap()) - 5}
-              class="fill-neutral-400 text-[10px]"
-            >
-              price cap {cap().toFixed(1)}p
-            </text>
           </>
         )}
       </Show>
-
-      <path
-        d={line()}
-        fill="none"
-        stroke="currentColor"
-        stroke-width="2"
-        class="text-accent"
-      />
 
       <For each={props.rates}>
         {(rate) => (
