@@ -90,33 +90,51 @@ async function getAllPages<T>(
 }
 
 /** Throws on multiple accounts rather than silently ingesting the wrong meter. */
+async function graphql<T>(
+  query: string,
+  variables: Record<string, unknown>,
+  fetchImpl: Fetcher,
+  token?: string,
+): Promise<T> {
+  const response = await fetchImpl(GRAPHQL, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      ...(token ? { Authorization: token } : {}),
+    },
+    body: JSON.stringify({ query, variables }),
+  });
+  const body = (await response.json()) as { data?: T; errors?: { message: string }[] };
+  if (body.errors?.length) throw new OctopusError(body.errors[0]!.message);
+  return body.data as T;
+}
+
+export async function krakenToken(
+  apiKey: string,
+  fetchImpl: Fetcher = fetch,
+): Promise<string> {
+  const data = await graphql<{ obtainKrakenToken?: { token?: string } | null }>(
+    'mutation($a: String!){ obtainKrakenToken(input:{APIKey:$a}){ token } }',
+    { a: apiKey },
+    fetchImpl,
+  );
+  const token = data.obtainKrakenToken?.token;
+  if (!token) throw new OctopusError('Could not obtain a Kraken token from the API key');
+  return token;
+}
+
 export async function discoverAccountNumber(
   apiKey: string,
   fetchImpl: Fetcher = fetch,
 ): Promise<string> {
-  const tokenResponse = await fetchImpl(GRAPHQL, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({
-      query: 'mutation($a: String!){ obtainKrakenToken(input:{APIKey:$a}){ token } }',
-      variables: { a: apiKey },
-    }),
-  });
-  const tokenBody = (await tokenResponse.json()) as {
-    data?: { obtainKrakenToken?: { token?: string } | null };
-  };
-  const token = tokenBody.data?.obtainKrakenToken?.token;
-  if (!token) throw new OctopusError('Could not obtain a Kraken token from the API key');
-
-  const accountsResponse = await fetchImpl(GRAPHQL, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json', Authorization: token },
-    body: JSON.stringify({ query: '{ viewer { accounts { number } } }' }),
-  });
-  const accountsBody = (await accountsResponse.json()) as {
-    data?: { viewer?: { accounts?: { number: string }[] } | null };
-  };
-  const accounts = accountsBody.data?.viewer?.accounts ?? [];
+  const token = await krakenToken(apiKey, fetchImpl);
+  const data = await graphql<{ viewer?: { accounts?: { number: string }[] } | null }>(
+    '{ viewer { accounts { number } } }',
+    {},
+    fetchImpl,
+    token,
+  );
+  const accounts = data.viewer?.accounts ?? [];
   if (accounts.length !== 1) {
     throw new OctopusError(`Expected exactly one account, found ${accounts.length}`);
   }
@@ -196,4 +214,58 @@ export async function fetchStandingCharges(
     apiKey,
     fetchImpl,
   );
+}
+
+/** The Home Mini's device id, or null when the account has none. */
+export async function discoverDeviceId(
+  apiKey: string,
+  accountNumber: string,
+  fetchImpl: Fetcher = fetch,
+): Promise<string | null> {
+  const token = await krakenToken(apiKey, fetchImpl);
+  const data = await graphql<{
+    account?: {
+      electricityAgreements?: {
+        meterPoint?: { meters?: { smartDevices?: { deviceId: string }[] }[] };
+      }[];
+    } | null;
+  }>(
+    'query($n: String!){ account(accountNumber:$n){ electricityAgreements(active:true){ meterPoint{ meters{ smartDevices{ deviceId } } } } } }',
+    { n: accountNumber },
+    fetchImpl,
+    token,
+  );
+  for (const agreement of data.account?.electricityAgreements ?? []) {
+    for (const meter of agreement.meterPoint?.meters ?? []) {
+      const device = meter.smartDevices?.[0];
+      if (device) return device.deviceId;
+    }
+  }
+  return null;
+}
+
+export interface TelemetryReading {
+  readAt: string;
+  /** Watts. */
+  demand: string;
+  /** Cumulative import register, watt-hours. */
+  consumption: string;
+}
+
+/** Half-hourly Home Mini telemetry; current to the minute, unlike the billing feed. */
+export async function fetchTelemetry(
+  apiKey: string,
+  deviceId: string,
+  start: string,
+  end: string,
+  fetchImpl: Fetcher = fetch,
+): Promise<TelemetryReading[]> {
+  const token = await krakenToken(apiKey, fetchImpl);
+  const data = await graphql<{ smartMeterTelemetry?: TelemetryReading[] | null }>(
+    'query($d: String!, $s: DateTime!, $e: DateTime!){ smartMeterTelemetry(deviceId:$d, grouping:HALF_HOURLY, start:$s, end:$e){ readAt demand consumption } }',
+    { d: deviceId, s: start, e: end },
+    fetchImpl,
+    token,
+  );
+  return data.smartMeterTelemetry ?? [];
 }

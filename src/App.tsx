@@ -7,8 +7,10 @@ import { addLondonDays, londonDay, londonMidnight, londonTime } from './lib/form
 import {
   cappedRate,
   consumptionBetween,
+  latestDemand,
   type RateSlot,
   ratesBetween,
+  telemetryBetween,
 } from './lib/queries';
 
 function Panel(props: { title: string; aside?: string; children: JSX.Element }) {
@@ -38,10 +40,21 @@ export default function App() {
   };
 
   const slots = createMemo(async () => consumptionBetween(window.from, window.to));
+  const estimated = createMemo(async () => {
+    const billed = slots().at(-1);
+    const from = billed
+      ? new Date(Date.parse(billed.start) + 1800_000)
+          .toISOString()
+          .replace(/\.\d{3}Z$/, 'Z')
+      : window.from;
+    return telemetryBetween(from, window.to);
+  });
+  const demand = createMemo(async () => latestDemand());
   const rates = createMemo(async () => ratesBetween(window.from, window.to));
   const cap = createMemo(async () => cappedRate(now));
 
-  const total = () => slots().reduce((sum, slot) => sum + slot.kwh, 0);
+  const total = () =>
+    [...slots(), ...estimated()].reduce((sum, slot) => sum + slot.kwh, 0);
   const current = () =>
     rates().find(
       (r) => r.start <= now && Date.parse(r.start) + 1_800_000 > Date.parse(now),
@@ -63,20 +76,24 @@ export default function App() {
 
       <Panel
         title="Electricity consumption"
-        aside={
-          slots().length
-            ? `${total().toFixed(1)} kWh since ${londonDay(window.from)}`
-            : undefined
-        }
+        aside={demand() ? `${demand()!.watts.toFixed(0)} W now` : undefined}
       >
         <Show
-          when={slots().length}
+          when={slots().length + estimated().length}
           fallback={<p class="text-sm text-neutral-500">No readings yet.</p>}
         >
-          <UsageChart slots={slots()} window={window} />
+          <UsageChart slots={slots()} estimated={estimated()} window={window} />
           <p class="mt-3 text-xs text-neutral-500">
-            Latest reading {londonDay(slots().at(-1)!.start)}{' '}
-            {londonTime(slots().at(-1)!.start)}
+            {total().toFixed(1)} kWh since {londonDay(window.from)}
+            <Show when={slots().at(-1)}>
+              {(last) => (
+                <>
+                  {' '}
+                  · billed to {londonDay(last().start)} {londonTime(last().start)},
+                  lighter bars are from the meter since
+                </>
+              )}
+            </Show>
           </p>
         </Show>
       </Panel>

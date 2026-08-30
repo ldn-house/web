@@ -7,7 +7,11 @@ import { PAD, TimeAxis, WIDTH, type Window } from './TimeAxis';
 const HEIGHT = 220;
 const SLOT_MS = 30 * 60_000;
 
-export function UsageChart(props: { slots: readonly Slot[]; window: Window }) {
+export function UsageChart(props: {
+  slots: readonly Slot[];
+  estimated: readonly Slot[];
+  window: Window;
+}) {
   const peak = createMemo(() =>
     niceCeiling(Math.max(0, ...props.slots.map((s) => s.kwh))),
   );
@@ -52,8 +56,13 @@ export function UsageChart(props: { slots: readonly Slot[]; window: Window }) {
 
       <TimeAxis window={props.window} x={x()} height={HEIGHT} />
 
-      <For each={props.slots}>
-        {(slot) => {
+      <For
+        each={[
+          ...props.slots.map((s) => [s, false] as const),
+          ...props.estimated.map((s) => [s, true] as const),
+        ]}
+      >
+        {([slot, estimated]) => {
           const top = () => y()(slot.kwh);
           return (
             <rect
@@ -61,10 +70,11 @@ export function UsageChart(props: { slots: readonly Slot[]; window: Window }) {
               y={top()}
               width={Math.max(barWidth() - 0.5, 0.5)}
               height={HEIGHT - PAD.bottom - top()}
-              class="fill-accent/70"
+              class={estimated ? 'fill-accent/30' : 'fill-accent/70'}
             >
               <title>
                 {londonTime(slot.start)} — {slot.kwh.toFixed(2)} kWh
+                {estimated ? ' (meter, not yet billed)' : ''}
               </title>
             </rect>
           );

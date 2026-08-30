@@ -64,3 +64,12 @@ export type ConsumptionRow = typeof consumption.$inferSelect;
 export type UnitRateRow = typeof unitRates.$inferSelect;
 export type StandingChargeRow = typeof standingCharges.$inferSelect;
 export type AgreementRow = typeof agreements.$inferSelect;
+
+/** Home Mini readings: `register_wh` is the meter's cumulative import register. */
+export const telemetry = sqliteTable('telemetry', {
+  readAt: text('read_at').primaryKey(),
+  demandW: real('demand_w').notNull(),
+  registerWh: real('register_wh').notNull(),
+});
+
+export type TelemetryRow = typeof telemetry.$inferSelect;
