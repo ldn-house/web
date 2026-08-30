@@ -86,6 +86,20 @@ export default function App() {
           fallback={<p class="text-sm text-neutral-500">No rates published.</p>}
         >
           <RateChart rates={rates()} cap={cap()} window={window} />
+          <ul class="mt-2 flex gap-5 text-xs text-neutral-400">
+            <li class="flex items-center gap-2">
+              <span class="inline-block h-0.5 w-5 bg-accent" />
+              Agile
+            </li>
+            <Show when={cap()}>
+              {(value) => (
+                <li class="flex items-center gap-2">
+                  <span class="inline-block h-0 w-5 border-t border-dashed border-sky-400" />
+                  Price cap {value().toFixed(1)}p/kWh
+                </li>
+              )}
+            </Show>
+          </ul>
           <Show when={cheapestAhead()}>
             {(slot) => (
               <p class="mt-3 text-xs text-neutral-500">

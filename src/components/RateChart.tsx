@@ -90,9 +90,6 @@ export function RateChart(props: {
               stroke-dasharray="4 3"
               class="text-sky-400"
             />
-            <text x={PAD.left + 4} y={y()(cap()) - 5} class="fill-sky-400 text-[10px]">
-              price cap {cap().toFixed(1)}p
-            </text>
           </>
         )}
       </Show>
