@@ -54,7 +54,7 @@ export function UsageChart(props: {
         )}
       </For>
 
-      <TimeAxis window={props.window} x={x()} height={HEIGHT} />
+      <TimeAxis window={props.window} x={x()} height={HEIGHT} showNow={false} />
 
       <For
         each={[

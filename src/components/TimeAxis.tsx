@@ -11,7 +11,12 @@ export interface Window {
   now: string;
 }
 
-export function TimeAxis(props: { window: Window; x: Scale; height: number }) {
+export function TimeAxis(props: {
+  window: Window;
+  x: Scale;
+  height: number;
+  showNow?: boolean;
+}) {
   const at = (iso: string) => props.x(Date.parse(iso));
   return (
     <>
@@ -41,7 +46,11 @@ export function TimeAxis(props: { window: Window; x: Scale; height: number }) {
         )}
       </For>
       <Show
-        when={props.window.now >= props.window.from && props.window.now < props.window.to}
+        when={
+          props.showNow !== false &&
+          props.window.now >= props.window.from &&
+          props.window.now < props.window.to
+        }
       >
         <line
           x1={at(props.window.now)}
