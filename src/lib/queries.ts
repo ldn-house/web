@@ -124,15 +124,24 @@ export async function telemetryBetween(
   return slots;
 }
 
-/** Null once the Home Mini has gone quiet: buckets are half-hourly, so 45 minutes is a missed one. */
-export async function latestDemand(
+/** Stable SSR summary; null once the half-hourly Home Mini snapshots have gone quiet. */
+export async function recentAverageDemand(
   now = Date.now(),
-): Promise<{ readAt: string; watts: number } | null> {
-  const [row] = await db()
+): Promise<{ through: string; watts: number } | null> {
+  const rows = await db()
     .select({ readAt: schema.telemetry.readAt, watts: schema.telemetry.demandW })
     .from(schema.telemetry)
-    .orderBy(desc(schema.telemetry.readAt))
-    .limit(1);
-  if (!row || now - Date.parse(row.readAt) > 45 * 60_000) return null;
-  return row;
+    .where(
+      gte(
+        schema.telemetry.readAt,
+        new Date(now - 60 * 60_000).toISOString().replace(/\.\d{3}Z$/, 'Z'),
+      ),
+    )
+    .orderBy(asc(schema.telemetry.readAt));
+  const latest = rows.at(-1);
+  if (!latest || now - Date.parse(latest.readAt) > 45 * 60_000) return null;
+  return {
+    through: latest.readAt,
+    watts: rows.reduce((sum, row) => sum + row.watts, 0) / rows.length,
+  };
 }

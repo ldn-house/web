@@ -2,8 +2,8 @@ import { env } from 'cloudflare:test';
 import { beforeEach, describe, expect, it } from 'vitest';
 import {
   consumptionBetween,
-  latestDemand,
   ratesBetween,
+  recentAverageDemand,
   telemetryBetween,
 } from './queries';
 
@@ -116,22 +116,27 @@ describe('queries', () => {
     ]);
   });
 
-  it('reports demand only while the Home Mini is fresh', async () => {
+  it('averages the recent demand only while the Home Mini is fresh', async () => {
     const readAt = '2026-01-06T00:00:00Z';
-    await seed(
-      'INSERT INTO telemetry (read_at, demand_w, register_wh) VALUES (?,?,?)',
-      readAt,
-      660,
-      1000,
-    );
-    expect(await latestDemand(Date.parse(readAt) + 30 * 60_000)).toEqual({
-      readAt,
-      watts: 660,
+    for (const [minutes, watts] of [
+      [0, 400],
+      [30, 800],
+    ] as const) {
+      await seed(
+        'INSERT INTO telemetry (read_at, demand_w, register_wh) VALUES (?,?,?)',
+        iso(Date.parse(readAt) + minutes * 60_000),
+        watts,
+        1000,
+      );
+    }
+    expect(await recentAverageDemand(Date.parse(readAt) + 40 * 60_000)).toEqual({
+      through: '2026-01-06T00:30:00Z',
+      watts: 600,
     });
-    expect(await latestDemand(Date.parse(readAt) + 60 * 60_000)).toBeNull();
+    expect(await recentAverageDemand(Date.parse(readAt) + 90 * 60_000)).toBeNull();
   });
 
   it('returns no demand when there is no telemetry', async () => {
-    expect(await latestDemand()).toBeNull();
+    expect(await recentAverageDemand()).toBeNull();
   });
 });
