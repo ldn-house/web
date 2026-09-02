@@ -77,9 +77,16 @@ export default function App() {
 
   onSettled(() => {
     if (typeof document === 'undefined') return;
-    const controller = new AbortController();
+    let activeRequest: AbortController | undefined;
+    let staleTimer: ReturnType<typeof setTimeout> | undefined;
+    let stopped = false;
     let polling = false;
     let lastPollAt = 0;
+    const clearLiveDemand = () => {
+      clearTimeout(staleTimer);
+      staleTimer = undefined;
+      setLiveDemand(null);
+    };
     const poll = async () => {
       if (
         polling ||
@@ -89,20 +96,32 @@ export default function App() {
         return;
       polling = true;
       lastPollAt = Date.now();
+      const request = new AbortController();
+      activeRequest = request;
+      const timeout = setTimeout(() => request.abort(), 8_000);
       try {
-        const response = await fetch('/api/live-power', { signal: controller.signal });
+        const response = await fetch('/api/live-power', { signal: request.signal });
         if (!response.ok) {
-          setLiveDemand(null);
+          clearLiveDemand();
           return;
         }
         const reading = (await response.json()) as { readAt?: unknown; watts?: unknown };
         if (typeof reading.readAt === 'string' && typeof reading.watts === 'number') {
           setLiveDemand({ readAt: reading.readAt, watts: reading.watts });
           setLiveTick((tick) => tick + 1);
+          clearTimeout(staleTimer);
+          staleTimer = setTimeout(() => setLiveDemand(null), 20_000);
+        } else {
+          clearLiveDemand();
         }
       } catch (error) {
-        if (!controller.signal.aborted) console.warn('live power poll failed', error);
+        if (!stopped) {
+          clearLiveDemand();
+          console.warn('live power poll failed', error);
+        }
       } finally {
+        clearTimeout(timeout);
+        if (activeRequest === request) activeRequest = undefined;
         polling = false;
       }
     };
@@ -111,7 +130,9 @@ export default function App() {
     const timer = setInterval(poll, 10_000);
     document.addEventListener('visibilitychange', pollWhenVisible);
     return () => {
-      controller.abort();
+      stopped = true;
+      activeRequest?.abort();
+      clearTimeout(staleTimer);
       clearInterval(timer);
       document.removeEventListener('visibilitychange', pollWhenVisible);
     };
