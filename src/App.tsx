@@ -1,25 +1,38 @@
 import type { JSX } from '@solidjs/web';
-import { createMemo, Show } from 'solid-js';
+import { createEffect, createMemo, createSignal, onSettled, Show } from 'solid-js';
 import { RateChart } from './components/RateChart';
-import type { Window } from './components/TimeAxis';
+import type { Window as ChartWindow } from './components/TimeAxis';
 import { UsageChart } from './components/UsageChart';
 import { addLondonDays, londonDay, londonMidnight, londonTime } from './lib/format';
 import {
   cappedRate,
   consumptionBetween,
-  latestDemand,
   type RateSlot,
   ratesBetween,
+  recentAverageDemand,
   telemetryBetween,
 } from './lib/queries';
 
-function Panel(props: { title: string; aside?: string; children: JSX.Element }) {
+function Panel(props: {
+  title: string;
+  aside?: string;
+  asideTitle?: string;
+  /** Hands the aside element to the parent so it can animate it. */
+  asideRef?: (el: HTMLParagraphElement) => void;
+  children: JSX.Element;
+}) {
   return (
     <section class="mt-6 rounded-xl bg-surface-raised p-5">
       <div class="flex items-baseline justify-between gap-4">
         <h2 class="text-sm font-medium text-neutral-300">{props.title}</h2>
         <Show when={props.aside}>
-          <p class="text-sm tabular-nums text-neutral-400">{props.aside}</p>
+          <p
+            ref={(el) => props.asideRef?.(el)}
+            title={props.asideTitle}
+            class="text-sm tabular-nums text-neutral-400"
+          >
+            {props.aside}
+          </p>
         </Show>
       </div>
       <div class="mt-4">{props.children}</div>
@@ -33,7 +46,7 @@ export default function App() {
   // covers both and the charts share an axis.
   const now = new Date().toISOString();
   const today = londonMidnight(now);
-  const window: Window = {
+  const window: ChartWindow = {
     from: addLondonDays(today, -2),
     to: addLondonDays(today, 2),
     now,
@@ -49,9 +62,113 @@ export default function App() {
       : window.from;
     return telemetryBetween(from, window.to);
   });
-  const demand = createMemo(async () => latestDemand());
+  const averageDemand = createMemo(async () => recentAverageDemand());
+  const [liveDemand, setLiveDemand] = createSignal<{
+    readAt: string;
+    watts: number;
+  } | null>(null);
+  // Bumped on every successful live reading, including unchanged ones, so the
+  // label can flash even when the number stays put.
+  const [liveTick, setLiveTick] = createSignal(0);
+  let liveAside: HTMLParagraphElement | undefined;
+  let liveFlash: Animation | undefined;
   const rates = createMemo(async () => ratesBetween(window.from, window.to));
   const cap = createMemo(async () => cappedRate(now));
+
+  onSettled(() => {
+    if (typeof document === 'undefined') return;
+    let activeRequest: AbortController | undefined;
+    let staleTimer: ReturnType<typeof setTimeout> | undefined;
+    let stopped = false;
+    let polling = false;
+    let lastPollAt = 0;
+    const clearLiveDemand = () => {
+      clearTimeout(staleTimer);
+      staleTimer = undefined;
+      setLiveDemand(null);
+    };
+    const poll = async () => {
+      if (
+        polling ||
+        document.visibilityState === 'hidden' ||
+        Date.now() - lastPollAt < 9_000
+      )
+        return;
+      polling = true;
+      lastPollAt = Date.now();
+      const request = new AbortController();
+      activeRequest = request;
+      const timeout = setTimeout(() => request.abort(), 8_000);
+      try {
+        const response = await fetch('/api/live-power', { signal: request.signal });
+        if (!response.ok) {
+          clearLiveDemand();
+          return;
+        }
+        const reading = (await response.json()) as { readAt?: unknown; watts?: unknown };
+        if (typeof reading.readAt === 'string' && typeof reading.watts === 'number') {
+          setLiveDemand({ readAt: reading.readAt, watts: reading.watts });
+          setLiveTick((tick) => tick + 1);
+          clearTimeout(staleTimer);
+          staleTimer = setTimeout(() => setLiveDemand(null), 20_000);
+        } else {
+          clearLiveDemand();
+        }
+      } catch (error) {
+        if (!stopped) {
+          clearLiveDemand();
+          console.warn('live power poll failed', error);
+        }
+      } finally {
+        clearTimeout(timeout);
+        if (activeRequest === request) activeRequest = undefined;
+        polling = false;
+      }
+    };
+    const pollWhenVisible = () => void poll();
+    void poll();
+    const timer = setInterval(poll, 10_000);
+    document.addEventListener('visibilitychange', pollWhenVisible);
+    return () => {
+      stopped = true;
+      activeRequest?.abort();
+      clearTimeout(staleTimer);
+      clearInterval(timer);
+      document.removeEventListener('visibilitychange', pollWhenVisible);
+    };
+  });
+
+  // Each fresh reading lights the live label up to near-white, then it settles
+  // back into the panel's muted colour over about two seconds. Deferred so it
+  // only ever fires for readings that arrive after the page is up, which keeps
+  // the server-rendered hourly-average fallback quiet.
+  createEffect(
+    () => liveTick(),
+    () => {
+      // Drop any in-flight flash first, so the resting colour below is read
+      // from the class rather than from a half-faded animated value.
+      liveFlash?.cancel();
+      const el = liveAside;
+      if (!el || !el.isConnected || typeof el.animate !== 'function') return;
+      // Reduced motion keeps the label at its resting colour, no animation.
+      if (globalThis.matchMedia?.('(prefers-reduced-motion: reduce)').matches) return;
+      // Read the resting colour off the element so this keeps tracking the
+      // Tailwind class instead of duplicating the token.
+      const settled = globalThis.getComputedStyle(el).color;
+      const lit = 'oklch(0.985 0 0)'; // neutral-50
+      const flash = el.animate(
+        [
+          { color: lit, offset: 0, easing: 'linear' },
+          { color: lit, offset: 0.1, easing: 'ease-out' },
+          { color: settled, offset: 1 },
+        ],
+        { duration: 2_000 },
+      );
+      liveFlash = flash;
+      return () => flash.cancel();
+    },
+    { defer: true },
+  );
 
   const total = () =>
     [...slots(), ...estimated()].reduce((sum, slot) => sum + slot.kwh, 0);
@@ -76,7 +193,23 @@ export default function App() {
 
       <Panel
         title="Electricity consumption"
-        aside={demand() ? `${demand()!.watts.toFixed(0)} W now` : undefined}
+        asideRef={(el) => {
+          liveAside = el;
+        }}
+        asideTitle={
+          liveDemand()
+            ? `Home Mini reading at ${londonTime(liveDemand()!.readAt)}; refreshes every 10 seconds`
+            : averageDemand()
+              ? 'Average demand from the most recent hour of Home Mini readings'
+              : undefined
+        }
+        aside={
+          liveDemand()
+            ? `${liveDemand()!.watts.toFixed(0)} W live`
+            : averageDemand()
+              ? `~${averageDemand()!.watts.toFixed(0)} W last hour`
+              : undefined
+        }
       >
         <Show
           when={slots().length + estimated().length}

@@ -4,6 +4,7 @@ import {
   type Fetcher,
   fetchAccount,
   fetchConsumption,
+  fetchLiveDemand,
   fetchUnitRates,
   OctopusError,
   productCodeFromTariff,
@@ -139,5 +140,82 @@ describe('fetchUnitRates', () => {
     expect(urls[0]).toContain(
       '/products/AGILE-24-10-01/electricity-tariffs/E-1R-AGILE-24-10-01-C/standard-unit-rates/',
     );
+  });
+});
+
+describe('fetchLiveDemand', () => {
+  it('requests ten-second telemetry and returns its newest fresh reading', async () => {
+    const bodies: { query: string; variables: Record<string, string> }[] = [];
+    const responses = [
+      { data: { obtainKrakenToken: { token: 'token-1' } } },
+      { data: { viewer: { accounts: [{ number: 'A-SYNTH01' }] } } },
+      {
+        data: {
+          account: {
+            electricityAgreements: [
+              {
+                meterPoint: {
+                  meters: [{ smartDevices: [{ deviceId: 'SYNTH-DEVICE' }] }],
+                },
+              },
+            ],
+          },
+        },
+      },
+      {
+        data: {
+          smartMeterTelemetry: [
+            { readAt: '2026-01-06T11:59:40Z', demand: '420', consumption: '1000' },
+            { readAt: '2026-01-06T11:59:50Z', demand: '510', consumption: '1001' },
+          ],
+        },
+      },
+    ];
+    const fetchImpl = (async (_input: string | URL | Request, init?: RequestInit) => {
+      bodies.push(JSON.parse(String(init?.body)));
+      return jsonResponse(responses.shift());
+    }) as Fetcher;
+
+    await expect(
+      fetchLiveDemand(KEY, new Date('2026-01-06T12:00:00Z'), fetchImpl),
+    ).resolves.toEqual({ readAt: '2026-01-06T11:59:50Z', watts: 510 });
+    expect(bodies.at(-1)!.query).toContain('grouping:TEN_SECONDS');
+    expect(bodies.at(-1)!.variables).toMatchObject({
+      d: 'SYNTH-DEVICE',
+      s: '2026-01-06T11:58:00.000Z',
+      e: '2026-01-06T12:00:00.000Z',
+    });
+  });
+
+  it('rejects stale telemetry instead of calling it live', async () => {
+    const responses = [
+      { data: { obtainKrakenToken: { token: 'token-1' } } },
+      { data: { viewer: { accounts: [{ number: 'A-SYNTH01' }] } } },
+      {
+        data: {
+          account: {
+            electricityAgreements: [
+              {
+                meterPoint: {
+                  meters: [{ smartDevices: [{ deviceId: 'SYNTH-DEVICE' }] }],
+                },
+              },
+            ],
+          },
+        },
+      },
+      {
+        data: {
+          smartMeterTelemetry: [
+            { readAt: '2026-01-06T11:50:00Z', demand: '510', consumption: '1001' },
+          ],
+        },
+      },
+    ];
+    const fetchImpl = (async () => jsonResponse(responses.shift())) as Fetcher;
+
+    await expect(
+      fetchLiveDemand(KEY, new Date('2026-01-06T12:00:00Z'), fetchImpl),
+    ).resolves.toBeNull();
   });
 });

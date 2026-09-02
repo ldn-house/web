@@ -123,11 +123,10 @@ export async function krakenToken(
   return token;
 }
 
-export async function discoverAccountNumber(
-  apiKey: string,
-  fetchImpl: Fetcher = fetch,
+async function discoverAccountNumberWithToken(
+  token: string,
+  fetchImpl: Fetcher,
 ): Promise<string> {
-  const token = await krakenToken(apiKey, fetchImpl);
   const data = await graphql<{ viewer?: { accounts?: { number: string }[] } | null }>(
     '{ viewer { accounts { number } } }',
     {},
@@ -139,6 +138,13 @@ export async function discoverAccountNumber(
     throw new OctopusError(`Expected exactly one account, found ${accounts.length}`);
   }
   return accounts[0]!.number;
+}
+
+export async function discoverAccountNumber(
+  apiKey: string,
+  fetchImpl: Fetcher = fetch,
+): Promise<string> {
+  return discoverAccountNumberWithToken(await krakenToken(apiKey, fetchImpl), fetchImpl);
 }
 
 /** Import meter points only; export would need its own consumption table. */
@@ -217,12 +223,11 @@ export async function fetchStandingCharges(
 }
 
 /** The Home Mini's device id, or null when the account has none. */
-export async function discoverDeviceId(
-  apiKey: string,
+async function discoverDeviceIdWithToken(
   accountNumber: string,
-  fetchImpl: Fetcher = fetch,
+  token: string,
+  fetchImpl: Fetcher,
 ): Promise<string | null> {
-  const token = await krakenToken(apiKey, fetchImpl);
   const data = await graphql<{
     account?: {
       electricityAgreements?: {
@@ -244,12 +249,29 @@ export async function discoverDeviceId(
   return null;
 }
 
+export async function discoverDeviceId(
+  apiKey: string,
+  accountNumber: string,
+  fetchImpl: Fetcher = fetch,
+): Promise<string | null> {
+  return discoverDeviceIdWithToken(
+    accountNumber,
+    await krakenToken(apiKey, fetchImpl),
+    fetchImpl,
+  );
+}
+
 export interface TelemetryReading {
   readAt: string;
   /** Watts. */
   demand: string;
   /** Cumulative import register, watt-hours. */
   consumption: string;
+}
+
+export interface LiveDemand {
+  readAt: string;
+  watts: number;
 }
 
 /** Half-hourly Home Mini telemetry; current to the minute, unlike the billing feed. */
@@ -268,4 +290,32 @@ export async function fetchTelemetry(
     token,
   );
   return data.smartMeterTelemetry ?? [];
+}
+
+/** A near-real-time Home Mini demand reading, averaged over a ten-second bucket. */
+export async function fetchLiveDemand(
+  apiKey: string,
+  now = new Date(),
+  fetchImpl: Fetcher = fetch,
+): Promise<LiveDemand | null> {
+  const token = await krakenToken(apiKey, fetchImpl);
+  const accountNumber = await discoverAccountNumberWithToken(token, fetchImpl);
+  const deviceId = await discoverDeviceIdWithToken(accountNumber, token, fetchImpl);
+  if (!deviceId) return null;
+
+  const end = now.toISOString();
+  const start = new Date(now.getTime() - 2 * 60_000).toISOString();
+  const data = await graphql<{ smartMeterTelemetry?: TelemetryReading[] | null }>(
+    'query($d: String!, $s: DateTime!, $e: DateTime!){ smartMeterTelemetry(deviceId:$d, grouping:TEN_SECONDS, start:$s, end:$e){ readAt demand consumption } }',
+    { d: deviceId, s: start, e: end },
+    fetchImpl,
+    token,
+  );
+  const latest = (data.smartMeterTelemetry ?? []).reduce<TelemetryReading | null>(
+    (best, reading) => (!best || reading.readAt > best.readAt ? reading : best),
+    null,
+  );
+  if (!latest || now.getTime() - Date.parse(latest.readAt) > 2 * 60_000) return null;
+  const watts = Number(latest.demand);
+  return Number.isFinite(watts) ? { readAt: latest.readAt, watts } : null;
 }
