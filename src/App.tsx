@@ -12,6 +12,7 @@ import {
   recentAverageDemand,
   telemetryBetween,
 } from './lib/queries';
+import { startVisibilityPolling } from './lib/visibility-polling';
 
 function Panel(props: {
   title: string;
@@ -87,18 +88,22 @@ export default function App() {
       staleTimer = undefined;
       setLiveDemand(null);
     };
-    const poll = async () => {
+    const poll = async (force = false) => {
       if (
         polling ||
         document.visibilityState === 'hidden' ||
-        Date.now() - lastPollAt < 9_000
+        (!force && Date.now() - lastPollAt < 9_000)
       )
         return;
       polling = true;
       lastPollAt = Date.now();
       const request = new AbortController();
       activeRequest = request;
-      const timeout = setTimeout(() => request.abort(), 8_000);
+      let timedOut = false;
+      const timeout = setTimeout(() => {
+        timedOut = true;
+        request.abort();
+      }, 8_000);
       try {
         const response = await fetch('/api/live-power', { signal: request.signal });
         if (!response.ok) {
@@ -115,26 +120,34 @@ export default function App() {
           clearLiveDemand();
         }
       } catch (error) {
-        if (!stopped) {
+        if (!stopped && (timedOut || !request.signal.aborted)) {
           clearLiveDemand();
           console.warn('live power poll failed', error);
         }
       } finally {
         clearTimeout(timeout);
-        if (activeRequest === request) activeRequest = undefined;
-        polling = false;
+        if (activeRequest === request) {
+          activeRequest = undefined;
+          polling = false;
+        }
       }
     };
-    const pollWhenVisible = () => void poll();
-    void poll();
-    const timer = setInterval(poll, 10_000);
-    document.addEventListener('visibilitychange', pollWhenVisible);
+    const pausePolling = () => {
+      activeRequest?.abort();
+      activeRequest = undefined;
+      polling = false;
+      clearLiveDemand();
+    };
+    const stopVisibilityPolling = startVisibilityPolling({
+      source: document,
+      intervalMs: 10_000,
+      poll: (force) => void poll(force),
+      pause: pausePolling,
+    });
     return () => {
       stopped = true;
-      activeRequest?.abort();
+      stopVisibilityPolling();
       clearTimeout(staleTimer);
-      clearInterval(timer);
-      document.removeEventListener('visibilitychange', pollWhenVisible);
     };
   });
 
