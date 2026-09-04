@@ -35,6 +35,10 @@ export function niceCeiling(max: number): number {
   return Math.ceil(max / magnitude) * magnitude;
 }
 
+export function seriesCeiling(...series: readonly (readonly number[])[]): number {
+  return niceCeiling(Math.max(0, ...series.flat()));
+}
+
 export function ticks(max: number, count = 4): number[] {
   return Array.from({ length: count + 1 }, (_, i) => (max / count) * i);
 }
