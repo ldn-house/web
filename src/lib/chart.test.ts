@@ -3,6 +3,7 @@ import {
   linearScale,
   niceCeiling,
   recentDayBounds,
+  seriesCeiling,
   stepPath,
   tickIndices,
   ticks,
@@ -49,6 +50,12 @@ describe('niceCeiling', () => {
     expect(niceCeiling(0.82)).toBeCloseTo(0.9);
     expect(niceCeiling(47)).toBe(50);
     expect(niceCeiling(0)).toBe(1);
+  });
+});
+
+describe('seriesCeiling', () => {
+  it('includes every series in the axis maximum', () => {
+    expect(seriesCeiling([0.8], [1.53])).toBe(2);
   });
 });
 

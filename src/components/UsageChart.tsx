@@ -1,5 +1,5 @@
 import { createMemo, For } from 'solid-js';
-import { linearScale, niceCeiling, ticks } from '../lib/chart';
+import { linearScale, seriesCeiling, ticks } from '../lib/chart';
 import { londonTime } from '../lib/format';
 import type { Slot } from '../lib/queries';
 import { PAD, TimeAxis, WIDTH, type Window } from './TimeAxis';
@@ -13,7 +13,10 @@ export function UsageChart(props: {
   window: Window;
 }) {
   const peak = createMemo(() =>
-    niceCeiling(Math.max(0, ...props.slots.map((s) => s.kwh))),
+    seriesCeiling(
+      props.slots.map((s) => s.kwh),
+      props.estimated.map((s) => s.kwh),
+    ),
   );
   const y = createMemo(() => linearScale([0, peak()], [HEIGHT - PAD.bottom, PAD.top]));
   const x = createMemo(() =>
