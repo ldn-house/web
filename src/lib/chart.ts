@@ -1,4 +1,22 @@
+import { addLondonDays, londonMidnight } from './format';
+
 export type Scale = (value: number) => number;
+
+/** Yesterday and today, extended through tomorrow when tomorrow has rates. */
+export function recentDayBounds(
+  now: string,
+  rateStarts: readonly string[] = [],
+): readonly [from: string, to: string] {
+  const today = londonMidnight(now);
+  const tomorrow = addLondonDays(today, 1);
+  const dayAfterTomorrow = addLondonDays(today, 2);
+  const hasTomorrowRates = rateStarts.some((start) => {
+    const timestamp = Date.parse(start);
+    return timestamp >= Date.parse(tomorrow) && timestamp < Date.parse(dayAfterTomorrow);
+  });
+
+  return [addLondonDays(today, -1), hasTomorrowRates ? dayAfterTomorrow : tomorrow];
+}
 
 export function linearScale(
   domain: readonly [number, number],

@@ -3,6 +3,7 @@ import { createEffect, createMemo, createSignal, onSettled, Show } from 'solid-j
 import { RateChart } from './components/RateChart';
 import type { Window as ChartWindow } from './components/TimeAxis';
 import { UsageChart } from './components/UsageChart';
+import { recentDayBounds } from './lib/chart';
 import { addLondonDays, londonDay, londonMidnight, londonTime } from './lib/format';
 import {
   cappedRate,
@@ -42,26 +43,27 @@ function Panel(props: {
 }
 
 export default function App() {
-  // Whole London days, from the day before yesterday to the end of tomorrow.
-  // Readings lag by up to two days and rates run a day ahead, so one window
-  // covers both and the charts share an axis.
+  // Fetch yesterday through tomorrow. Both charts share yesterday and today,
+  // adding tomorrow to their common axis once those rates are published.
   const now = new Date().toISOString();
   const today = londonMidnight(now);
-  const window: ChartWindow = {
-    from: addLondonDays(today, -2),
+  const queryWindow: ChartWindow = {
+    from: addLondonDays(today, -1),
     to: addLondonDays(today, 2),
     now,
   };
 
-  const slots = createMemo(async () => consumptionBetween(window.from, window.to));
+  const slots = createMemo(async () =>
+    consumptionBetween(queryWindow.from, queryWindow.to),
+  );
   const estimated = createMemo(async () => {
     const billed = slots().at(-1);
     const from = billed
       ? new Date(Date.parse(billed.start) + 1800_000)
           .toISOString()
           .replace(/\.\d{3}Z$/, 'Z')
-      : window.from;
-    return telemetryBetween(from, window.to);
+      : queryWindow.from;
+    return telemetryBetween(from, queryWindow.to);
   });
   const averageDemand = createMemo(async () => recentAverageDemand());
   const [liveDemand, setLiveDemand] = createSignal<{
@@ -73,7 +75,14 @@ export default function App() {
   const [liveTick, setLiveTick] = createSignal(0);
   let liveAside: HTMLParagraphElement | undefined;
   let liveFlash: Animation | undefined;
-  const rates = createMemo(async () => ratesBetween(window.from, window.to));
+  const rates = createMemo(async () => ratesBetween(queryWindow.from, queryWindow.to));
+  const chartWindow = createMemo<ChartWindow>(() => {
+    const bounds = recentDayBounds(
+      now,
+      rates().map((rate) => rate.start),
+    );
+    return { from: bounds[0], to: bounds[1], now };
+  });
   const cap = createMemo(async () => cappedRate(now));
 
   onSettled(() => {
@@ -228,9 +237,10 @@ export default function App() {
           when={slots().length + estimated().length}
           fallback={<p class="text-sm text-neutral-500">No readings yet.</p>}
         >
-          <UsageChart slots={slots()} estimated={estimated()} window={window} />
+          <UsageChart slots={slots()} estimated={estimated()} window={chartWindow()} />
           <p class="mt-3 text-xs text-neutral-500">
-            {total().toFixed(1)} kWh since {londonDay(window.from)}
+            {total().toFixed(1)} kWh since{' '}
+            {londonDay((slots()[0] ?? estimated()[0])!.start)}
             <Show when={slots().at(-1)}>
               {(last) => (
                 <>
@@ -252,7 +262,7 @@ export default function App() {
           when={rates().length}
           fallback={<p class="text-sm text-neutral-500">No rates published.</p>}
         >
-          <RateChart rates={rates()} cap={cap()} window={window} />
+          <RateChart rates={rates()} cap={cap()} window={chartWindow()} />
           <ul class="mt-2 flex gap-5 text-xs text-neutral-400">
             <li class="flex items-center gap-2">
               <span class="inline-block h-0.5 w-5 bg-accent" />

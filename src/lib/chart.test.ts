@@ -1,5 +1,35 @@
 import { describe, expect, it } from 'vitest';
-import { linearScale, niceCeiling, stepPath, tickIndices, ticks } from './chart';
+import {
+  linearScale,
+  niceCeiling,
+  recentDayBounds,
+  stepPath,
+  tickIndices,
+  ticks,
+} from './chart';
+
+describe('recentDayBounds', () => {
+  it('shows yesterday and today by default', () => {
+    expect(recentDayBounds('2026-09-04T09:00:00Z')).toEqual([
+      '2026-09-02T23:00:00Z',
+      '2026-09-04T23:00:00Z',
+    ]);
+  });
+
+  it('includes tomorrow when a tomorrow rate is available', () => {
+    expect(recentDayBounds('2026-09-04T09:00:00Z', ['2026-09-05T08:30:00Z'])).toEqual([
+      '2026-09-02T23:00:00Z',
+      '2026-09-05T23:00:00Z',
+    ]);
+  });
+
+  it('does not include later days outside the tomorrow window', () => {
+    expect(recentDayBounds('2026-09-04T09:00:00Z', ['2026-09-06T08:30:00Z'])).toEqual([
+      '2026-09-02T23:00:00Z',
+      '2026-09-04T23:00:00Z',
+    ]);
+  });
+});
 
 describe('linearScale', () => {
   it('maps a domain onto an inverted range, as SVG y needs', () => {
