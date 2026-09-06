@@ -1,5 +1,15 @@
 import { describe, expect, it } from 'vitest';
-import { addLondonDays, dayTicks, londonMidnight } from './format';
+import { addLondonDays, dayTicks, londonMidnight, londonTimeRange } from './format';
+
+describe('londonTimeRange', () => {
+  it('formats a half-hour settlement period', () => {
+    expect(londonTimeRange('2026-09-05T23:00:00Z')).toBe('00:00–00:30');
+  });
+
+  it('follows the London clock across the spring change', () => {
+    expect(londonTimeRange('2026-03-29T00:30:00Z')).toBe('00:30–02:00');
+  });
+});
 
 describe('londonMidnight', () => {
   it('is 23:00Z the previous day under BST', () => {

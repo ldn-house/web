@@ -1,6 +1,6 @@
 import { createMemo, createSignal, For, Show } from 'solid-js';
 import { linearScale, seriesCeiling, ticks } from '../lib/chart';
-import { londonDay, londonTime } from '../lib/format';
+import { londonDay, londonTimeRange } from '../lib/format';
 import type { Slot } from '../lib/queries';
 import { ChartTooltip } from './ChartTooltip';
 import { PAD, TimeAxis, WIDTH, type Window } from './TimeAxis';
@@ -140,7 +140,7 @@ export function UsageChart(props: {
               fill="transparent"
               tabindex={keyboardIndex() === index() ? 0 : -1}
               role="img"
-              aria-label={`${londonDay(item.slot.start)} ${londonTime(item.slot.start)}, ${item.slot.kwh.toFixed(2)} kilowatt hours, ${item.estimated ? 'meter estimate, not yet billed' : 'billed usage'}`}
+              aria-label={`${londonDay(item.slot.start)} ${londonTimeRange(item.slot.start)}, ${item.slot.kwh.toFixed(2)} kilowatt hours, ${item.estimated ? 'meter estimate, not yet billed' : 'billed usage'}`}
               onPointerEnter={() => setHovered(item)}
               onFocus={() => {
                 setKeyboardIndex(index());
@@ -157,7 +157,7 @@ export function UsageChart(props: {
         {(item) => (
           <ChartTooltip
             anchorX={anchorX(item().slot)}
-            heading={`${londonDay(item().slot.start)} · ${londonTime(item().slot.start)}`}
+            heading={`${londonDay(item().slot.start)} · ${londonTimeRange(item().slot.start)}`}
             value={`${item().slot.kwh.toFixed(2)} kWh`}
             detail={item().estimated ? 'Meter estimate' : 'Billed usage'}
           />

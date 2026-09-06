@@ -1,6 +1,6 @@
 import { createMemo, createSignal, For, Show } from 'solid-js';
 import { linearScale, niceCeiling, stepPath, ticks } from '../lib/chart';
-import { londonDay, londonTime } from '../lib/format';
+import { londonDay, londonTimeRange } from '../lib/format';
 import type { RateSlot } from '../lib/queries';
 import { ChartTooltip } from './ChartTooltip';
 import { PAD, TimeAxis, WIDTH, type Window } from './TimeAxis';
@@ -129,7 +129,7 @@ export function RateChart(props: {
               fill="transparent"
               tabindex={keyboardIndex() === index() ? 0 : -1}
               role="img"
-              aria-label={`${londonDay(rate.start)} ${londonTime(rate.start)}, ${rate.pIncVat.toFixed(2)} pence per kilowatt hour`}
+              aria-label={`${londonDay(rate.start)} ${londonTimeRange(rate.start)}, ${rate.pIncVat.toFixed(2)} pence per kilowatt hour`}
               onPointerEnter={() => setHovered(rate)}
               onFocus={() => {
                 setKeyboardIndex(index());
@@ -169,7 +169,7 @@ export function RateChart(props: {
         {(rate) => (
           <ChartTooltip
             anchorX={anchorX(rate())}
-            heading={`${londonDay(rate().start)} · ${londonTime(rate().start)}`}
+            heading={`${londonDay(rate().start)} · ${londonTimeRange(rate().start)}`}
             value={`${rate().pIncVat.toFixed(2)}p/kWh`}
             detail="Agile unit rate"
           />
