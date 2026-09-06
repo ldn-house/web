@@ -9,6 +9,12 @@ export function londonTime(iso: string): string {
   }).format(new Date(iso));
 }
 
+/** The London wall-clock range for a half-hour settlement period. */
+export function londonTimeRange(iso: string): string {
+  const end = new Date(Date.parse(iso) + 30 * 60_000).toISOString();
+  return `${londonTime(iso)}–${londonTime(end)}`;
+}
+
 export function londonDay(iso: string): string {
   return new Intl.DateTimeFormat('en-GB', {
     timeZone: LONDON,
