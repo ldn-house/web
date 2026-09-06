@@ -9,12 +9,12 @@ export function ChartTooltip(props: {
   return (
     <div
       role="tooltip"
-      class="pointer-events-none absolute top-2 z-10 w-36 rounded-lg border border-white/10 bg-neutral-950/95 px-3 py-2 shadow-lg shadow-black/25 backdrop-blur-sm"
+      class="pointer-events-none absolute top-2 z-10 w-44 rounded-lg border border-white/10 bg-neutral-950/95 px-3 py-2 shadow-lg shadow-black/25 backdrop-blur-sm"
       style={{
-        left: `clamp(0.5rem, calc(${(props.anchorX / WIDTH) * 100}% + 0.5rem), calc(100% - 9.5rem))`,
+        left: `clamp(0.5rem, calc(${(props.anchorX / WIDTH) * 100}% + 0.5rem), calc(100% - 11.5rem))`,
       }}
     >
-      <p class="truncate text-[10px] font-medium tracking-wide text-neutral-400 uppercase">
+      <p class="whitespace-nowrap text-[10px] font-medium tracking-wide text-neutral-400 uppercase">
         {props.heading}
       </p>
       <div class="mt-1 flex items-center gap-2">
