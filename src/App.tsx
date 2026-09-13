@@ -12,6 +12,11 @@ import {
 } from './lib/consumption';
 import { addLondonDays, londonDay, londonMidnight, londonTime } from './lib/format';
 import {
+  LIVE_READING_MAX_AGE_MS,
+  LIVE_REFRESH_MS,
+  retryAfterMs,
+} from './lib/live-polling';
+import {
   cappedRate,
   consumptionBetween,
   type RateSlot,
@@ -91,8 +96,7 @@ export default function App() {
     readAt: string;
     watts: number;
   } | null>(null);
-  // Bumped on every successful live reading, including unchanged ones, so the
-  // label can flash even when the number stays put.
+  // Flash only when the meter timestamp advances, not when a cached response repeats.
   const [liveTick, setLiveTick] = createSignal(0);
   let liveAside: HTMLParagraphElement | undefined;
   let liveFlash: Animation | undefined;
@@ -115,32 +119,36 @@ export default function App() {
     let staleTimer: ReturnType<typeof setTimeout> | undefined;
     let stopped = false;
     let polling = false;
-    let lastPollAt = 0;
+    let nextPollAt = 0;
     const clearLiveDemand = () => {
       clearTimeout(staleTimer);
       staleTimer = undefined;
       setLiveDemand(null);
     };
-    const poll = async (force = false) => {
-      if (
-        polling ||
-        document.visibilityState === 'hidden' ||
-        (!force && Date.now() - lastPollAt < 9_000)
-      )
-        return;
+    const poll = async () => {
+      if (document.visibilityState === 'hidden') return;
+      // The chart clock still advances while network polling is in a cooldown.
+      const now = Date.now();
+      setNow(new Date(now).toISOString());
+      if (polling || now < nextPollAt) return;
       polling = true;
-      lastPollAt = Date.now();
-      setNow(new Date(lastPollAt).toISOString());
+      nextPollAt = now + LIVE_REFRESH_MS;
       const request = new AbortController();
       activeRequest = request;
       let timedOut = false;
       const timeout = setTimeout(() => {
         timedOut = true;
         request.abort();
-      }, 8_000);
+      }, 25_000);
       try {
         const response = await fetch('/api/live-power', { signal: request.signal });
         if (stopped || request.signal.aborted) return;
+        nextPollAt =
+          Date.now() +
+          Math.max(
+            5_000,
+            retryAfterMs(response.headers.get('Retry-After')) ?? LIVE_REFRESH_MS,
+          );
         if (!response.ok) {
           clearLiveDemand();
           return;
@@ -160,8 +168,9 @@ export default function App() {
           typeof reading.watts === 'number' &&
           Number.isFinite(reading.watts) &&
           age >= 0 &&
-          age < 120_000
+          age < LIVE_READING_MAX_AGE_MS
         ) {
+          const isNewReading = liveDemand()?.readAt !== reading.readAt;
           setLiveDemand({ readAt: reading.readAt, watts: reading.watts });
           if (Array.isArray(reading.consumption)) {
             const recent = reading.consumption.filter(isMeterSlot);
@@ -170,11 +179,11 @@ export default function App() {
               mergeConsumption([], previous, recent, window.from, window.to),
             );
           }
-          setLiveTick((tick) => tick + 1);
+          if (isNewReading) setLiveTick((tick) => tick + 1);
           clearTimeout(staleTimer);
           staleTimer = setTimeout(
             () => setLiveDemand(null),
-            Math.min(20_000, 120_000 - age),
+            LIVE_READING_MAX_AGE_MS - age,
           );
         } else {
           clearLiveDemand();
@@ -196,12 +205,11 @@ export default function App() {
       activeRequest?.abort();
       activeRequest = undefined;
       polling = false;
-      clearLiveDemand();
     };
     const stopVisibilityPolling = startVisibilityPolling({
       source: document,
       intervalMs: 10_000,
-      poll: (force) => void poll(force),
+      poll: () => void poll(),
       pause: pausePolling,
     });
     return () => {
@@ -272,14 +280,14 @@ export default function App() {
         }}
         asideTitle={
           liveDemand()
-            ? `Home Mini reading at ${londonTime(liveDemand()!.readAt)}; refreshes every 10 seconds`
+            ? `Home Mini reading at ${londonTime(liveDemand()!.readAt)}; refreshes at most every 2 minutes`
             : averageDemand()
               ? 'Average demand from the most recent hour of Home Mini readings'
               : undefined
         }
         aside={
           liveDemand()
-            ? `${liveDemand()!.watts.toFixed(0)} W live`
+            ? `${liveDemand()!.watts.toFixed(0)} W at ${londonTime(liveDemand()!.readAt)}`
             : averageDemand()
               ? `~${averageDemand()!.watts.toFixed(0)} W last hour`
               : undefined

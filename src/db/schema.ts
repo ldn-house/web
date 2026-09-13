@@ -1,4 +1,11 @@
-import { index, primaryKey, real, sqliteTable, text } from 'drizzle-orm/sqlite-core';
+import {
+  index,
+  integer,
+  primaryKey,
+  real,
+  sqliteTable,
+  text,
+} from 'drizzle-orm/sqlite-core';
 
 /** `interval_start` is unique because only one meter reports at a time. */
 export const consumption = sqliteTable(
@@ -75,3 +82,11 @@ export const telemetry = sqliteTable('telemetry', {
 });
 
 export type TelemetryRow = typeof telemetry.$inferSelect;
+
+/** One shared reading and fetch lease, including cooldowns after upstream failures. */
+export const livePowerCache = sqliteTable('live_power_cache', {
+  id: integer('id').primaryKey(),
+  reading: text('reading'),
+  nextFetchAt: integer('next_fetch_at').notNull(),
+  leaseToken: text('lease_token'),
+});

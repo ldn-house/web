@@ -6,6 +6,7 @@ import {
   fetchConsumption,
   fetchLiveDemand,
   fetchUnitRates,
+  krakenToken,
   OctopusError,
   productCodeFromTariff,
 } from './octopus';
@@ -14,6 +15,41 @@ import {
 const MPAN = '1234567890123';
 const SERIAL = 'SYNTH00000001';
 const KEY = 'sk_test_synthetic';
+
+describe('GraphQL errors', () => {
+  it('preserves a throttle code and HTTP status from a GraphQL error response', async () => {
+    const fetchImpl = (async () =>
+      Response.json({
+        errors: [
+          { message: 'Another field failed', extensions: { errorCode: 'OTHER' } },
+          { message: 'Too many requests.', extensions: { errorCode: 'KT-CT-1199' } },
+        ],
+      })) as Fetcher;
+    await expect(krakenToken(KEY, fetchImpl)).rejects.toMatchObject({
+      status: 200,
+      code: 'KT-CT-1199',
+      rateLimited: true,
+    });
+  });
+
+  it('handles a non-JSON HTTP 429 and preserves Retry-After', async () => {
+    const fetchImpl = (async () =>
+      new Response('Too many requests', {
+        status: 429,
+        headers: { 'Retry-After': '900' },
+      })) as Fetcher;
+    await expect(krakenToken(KEY, fetchImpl)).rejects.toMatchObject({
+      status: 429,
+      retryAfterSeconds: 900,
+      rateLimited: true,
+    });
+  });
+
+  it('recognises the telemetry-specific throttle code', () => {
+    expect(new OctopusError('Please wait', 200, 'KT-GB-4042').rateLimited).toBe(true);
+    expect(new OctopusError('Other failure', 200, 'OTHER').rateLimited).toBe(false);
+  });
+});
 
 function jsonResponse(body: unknown, status = 200): Response {
   return new Response(JSON.stringify(body), {
