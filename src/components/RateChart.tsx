@@ -1,4 +1,4 @@
-import { createMemo, createSignal, For, Show } from 'solid-js';
+import { createMemo, createSignal, For, Show, untrack } from 'solid-js';
 import { linearScale, niceCeiling, stepPath, ticks } from '../lib/chart';
 import { londonDay, londonTimeRange } from '../lib/format';
 import type { RateSlot } from '../lib/queries';
@@ -120,7 +120,7 @@ export function RateChart(props: {
           {(rate, index) => (
             <rect
               ref={(element) => {
-                targets[index()] = element;
+                targets[untrack(index)] = element;
               }}
               x={x()(Date.parse(rate.start))}
               y={PAD.top}

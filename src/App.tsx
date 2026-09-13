@@ -4,6 +4,12 @@ import { RateChart } from './components/RateChart';
 import type { Window as ChartWindow } from './components/TimeAxis';
 import { UsageChart } from './components/UsageChart';
 import { recentDayBounds } from './lib/chart';
+import {
+  HALF_HOUR_MS,
+  isMeterSlot,
+  type MeterSlot,
+  mergeConsumption,
+} from './lib/consumption';
 import { addLondonDays, londonDay, londonMidnight, londonTime } from './lib/format';
 import {
   cappedRate,
@@ -45,27 +51,42 @@ function Panel(props: {
 export default function App() {
   // Fetch yesterday through tomorrow. Both charts share yesterday and today,
   // adding tomorrow to their common axis once those rates are published.
-  const now = new Date().toISOString();
-  const today = londonMidnight(now);
-  const queryWindow: ChartWindow = {
-    from: addLondonDays(today, -1),
-    to: addLondonDays(today, 2),
-    now,
-  };
+  const [now, setNow] = createSignal(new Date().toISOString());
+  const today = createMemo(() => londonMidnight(now()));
+  const period = createMemo(() => Math.floor(Date.parse(now()) / HALF_HOUR_MS));
+  const queryWindow = createMemo(() => ({
+    from: addLondonDays(today(), -1),
+    to: addLondonDays(today(), 2),
+  }));
 
-  const slots = createMemo(async () =>
-    consumptionBetween(queryWindow.from, queryWindow.to),
-  );
-  const estimated = createMemo(async () => {
-    const billed = slots().at(-1);
-    const from = billed
-      ? new Date(Date.parse(billed.start) + 1800_000)
-          .toISOString()
-          .replace(/\.\d{3}Z$/, 'Z')
-      : queryWindow.from;
-    return telemetryBetween(from, queryWindow.to);
+  const slots = createMemo(async () => {
+    period();
+    return consumptionBetween(queryWindow().from, queryWindow().to);
   });
-  const averageDemand = createMemo(async () => recentAverageDemand());
+  const meter = createMemo(async () => {
+    period();
+    return telemetryBetween(queryWindow().from, queryWindow().to);
+  });
+  const [recentMeter, setRecentMeter] = createSignal<MeterSlot[]>([]);
+  const usage = createMemo(() =>
+    mergeConsumption(
+      slots(),
+      meter(),
+      recentMeter(),
+      queryWindow().from,
+      queryWindow().to,
+    ),
+  );
+  const average = createMemo(async () => {
+    period();
+    return recentAverageDemand();
+  });
+  const averageDemand = () => {
+    const value = average();
+    return value && Date.parse(now()) - Date.parse(value.through) <= 45 * 60_000
+      ? value
+      : null;
+  };
   const [liveDemand, setLiveDemand] = createSignal<{
     readAt: string;
     watts: number;
@@ -75,15 +96,18 @@ export default function App() {
   const [liveTick, setLiveTick] = createSignal(0);
   let liveAside: HTMLParagraphElement | undefined;
   let liveFlash: Animation | undefined;
-  const rates = createMemo(async () => ratesBetween(queryWindow.from, queryWindow.to));
+  const rates = createMemo(async () => {
+    period();
+    return ratesBetween(queryWindow().from, queryWindow().to);
+  });
   const chartWindow = createMemo<ChartWindow>(() => {
     const bounds = recentDayBounds(
-      now,
+      now(),
       rates().map((rate) => rate.start),
     );
-    return { from: bounds[0], to: bounds[1], now };
+    return { from: bounds[0], to: bounds[1], now: now() };
   });
-  const cap = createMemo(async () => cappedRate(now));
+  const cap = createMemo(async () => cappedRate(today()));
 
   onSettled(() => {
     if (typeof document === 'undefined') return;
@@ -106,6 +130,7 @@ export default function App() {
         return;
       polling = true;
       lastPollAt = Date.now();
+      setNow(new Date(lastPollAt).toISOString());
       const request = new AbortController();
       activeRequest = request;
       let timedOut = false;
@@ -115,16 +140,42 @@ export default function App() {
       }, 8_000);
       try {
         const response = await fetch('/api/live-power', { signal: request.signal });
+        if (stopped || request.signal.aborted) return;
         if (!response.ok) {
           clearLiveDemand();
           return;
         }
-        const reading = (await response.json()) as { readAt?: unknown; watts?: unknown };
-        if (typeof reading.readAt === 'string' && typeof reading.watts === 'number') {
+        const reading = (await response.json()) as {
+          readAt?: unknown;
+          watts?: unknown;
+          consumption?: unknown;
+        };
+        if (stopped || request.signal.aborted) return;
+        const age =
+          typeof reading.readAt === 'string'
+            ? Date.now() - Date.parse(reading.readAt)
+            : Number.NaN;
+        if (
+          typeof reading.readAt === 'string' &&
+          typeof reading.watts === 'number' &&
+          Number.isFinite(reading.watts) &&
+          age >= 0 &&
+          age < 120_000
+        ) {
           setLiveDemand({ readAt: reading.readAt, watts: reading.watts });
+          if (Array.isArray(reading.consumption)) {
+            const recent = reading.consumption.filter(isMeterSlot);
+            const window = queryWindow();
+            setRecentMeter((previous) =>
+              mergeConsumption([], previous, recent, window.from, window.to),
+            );
+          }
           setLiveTick((tick) => tick + 1);
           clearTimeout(staleTimer);
-          staleTimer = setTimeout(() => setLiveDemand(null), 20_000);
+          staleTimer = setTimeout(
+            () => setLiveDemand(null),
+            Math.min(20_000, 120_000 - age),
+          );
         } else {
           clearLiveDemand();
         }
@@ -192,15 +243,16 @@ export default function App() {
     { defer: true },
   );
 
-  const total = () =>
-    [...slots(), ...estimated()].reduce((sum, slot) => sum + slot.kwh, 0);
+  const total = () => usage().reduce((sum, slot) => sum + slot.kwh, 0);
   const current = () =>
     rates().find(
-      (r) => r.start <= now && Date.parse(r.start) + 1_800_000 > Date.parse(now),
+      (r) =>
+        Date.parse(r.start) <= Date.parse(now()) &&
+        Date.parse(r.start) + HALF_HOUR_MS > Date.parse(now()),
     );
   const cheapestAhead = () =>
     rates()
-      .filter((r) => r.start >= now)
+      .filter((r) => Date.parse(r.start) >= Date.parse(now()))
       .reduce<RateSlot | undefined>(
         (best, r) => (!best || r.pIncVat < best.pIncVat ? r : best),
         undefined,
@@ -234,19 +286,17 @@ export default function App() {
         }
       >
         <Show
-          when={slots().length + estimated().length}
+          when={usage().length}
           fallback={<p class="text-sm text-neutral-500">No readings yet.</p>}
         >
-          <UsageChart slots={slots()} estimated={estimated()} window={chartWindow()} />
+          <UsageChart slots={usage()} window={chartWindow()} live={!!liveDemand()} />
           <p class="mt-3 text-xs text-neutral-500">
-            {total().toFixed(1)} kWh since{' '}
-            {londonDay((slots()[0] ?? estimated()[0])!.start)}
-            <Show when={slots().at(-1)}>
+            {total().toFixed(1)} kWh since {londonDay(usage()[0]!.start)}
+            <Show when={usage().at(-1)}>
               {(last) => (
                 <>
                   {' '}
-                  · billed to {londonDay(last().start)} {londonTime(last().start)},
-                  lighter bars are from the meter since
+                  · through {londonDay(last().through)} {londonTime(last().through)}
                 </>
               )}
             </Show>

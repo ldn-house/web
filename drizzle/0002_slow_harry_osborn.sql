@@ -1,0 +1,1 @@
+ALTER TABLE `telemetry` ADD `consumption_wh` real;

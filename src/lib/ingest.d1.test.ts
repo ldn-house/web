@@ -1,5 +1,5 @@
 import { env } from 'cloudflare:test';
-import { beforeEach, describe, expect, it } from 'vitest';
+import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { ingest } from './ingest';
 import type { Fetcher } from './octopus';
 
@@ -20,7 +20,12 @@ interface FakeApi {
   readings: { interval_start: string; interval_end: string; consumption: number }[];
   rates: Rate[];
   standing: Rate[];
-  telemetry?: { readAt: string; demand: string; consumption: string }[];
+  telemetry?: {
+    readAt: string;
+    demand: string;
+    consumption: string;
+    consumptionDelta?: string | null;
+  }[];
   telemetryError?: boolean;
 }
 
@@ -40,12 +45,15 @@ function fakeOctopus(api: FakeApi) {
       });
 
     if (url.pathname === '/v1/graphql/') {
-      const { query } = JSON.parse(String(init?.body ?? '{}')) as { query?: string };
+      const { query, variables } = JSON.parse(String(init?.body ?? '{}')) as {
+        query?: string;
+        variables?: Record<string, string>;
+      };
       if (query?.includes('obtainKrakenToken')) {
         return json({ data: { obtainKrakenToken: { token: 'synthetic-token' } } });
       }
       if (query?.includes('smartMeterTelemetry')) {
-        asked.telemetry!.push(url.pathname);
+        asked.telemetry!.push(variables?.s ?? '');
         if (api.telemetryError)
           return json({
             errors: [{ message: 'Unable to query smart meter telemetry data.' }],
@@ -271,18 +279,83 @@ describe('ingest against D1', () => {
   it('stores Home Mini telemetry when the account has a device', async () => {
     api.telemetry = [
       { readAt: '2026-01-06T00:00:00+00:00', demand: '400', consumption: '1000' },
-      { readAt: '2026-01-06T00:30:00+00:00', demand: '500', consumption: '1250' },
+      {
+        readAt: '2026-01-06T00:30:00+00:00',
+        demand: '500',
+        consumption: '1250',
+        consumptionDelta: '375',
+      },
     ];
     const summary = await ingest(env, { fetchImpl: fakeOctopus(api).fetchImpl });
     expect(summary.telemetryRows).toBe(2);
     const row = await env.DB.prepare(
-      'SELECT read_at, demand_w, register_wh FROM telemetry ORDER BY read_at DESC LIMIT 1',
+      'SELECT read_at, demand_w, register_wh, consumption_wh FROM telemetry ORDER BY read_at DESC LIMIT 1',
     ).first();
     expect(row).toEqual({
       read_at: '2026-01-06T00:30:00Z',
       demand_w: 500,
       register_wh: 1250,
+      consumption_wh: 375,
     });
+  });
+
+  it('only persists period consumption once the half-hour has finished', async () => {
+    vi.useFakeTimers({ toFake: ['Date'] });
+    try {
+      vi.setSystemTime(new Date('2026-01-06T01:07:00Z'));
+      api.telemetry = [
+        {
+          readAt: '2026-01-06T00:30:00Z',
+          demand: '500',
+          consumption: '1250',
+          consumptionDelta: '250',
+        },
+        {
+          readAt: '2026-01-06T01:00:00Z',
+          demand: '500',
+          consumption: '1300',
+          consumptionDelta: '50',
+        },
+      ];
+      await ingest(env, { fetchImpl: fakeOctopus(api).fetchImpl });
+      const periods = () =>
+        env.DB.prepare('SELECT consumption_wh FROM telemetry ORDER BY read_at').all();
+      expect((await periods()).results).toEqual([
+        { consumption_wh: 250 },
+        { consumption_wh: null },
+      ]);
+      vi.setSystemTime(new Date('2026-01-06T01:37:00Z'));
+      api.telemetry[1]!.consumptionDelta = '300';
+      await ingest(env, { fetchImpl: fakeOctopus(api).fetchImpl });
+      expect((await periods()).results).toEqual([
+        { consumption_wh: 250 },
+        { consumption_wh: 300 },
+      ]);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('backfills legacy telemetry and bounds recovery after a long outage to three days', async () => {
+    vi.useFakeTimers({ toFake: ['Date'] });
+    try {
+      vi.setSystemTime(new Date('2026-01-06T12:00:00Z'));
+      await env.DB.prepare(
+        "INSERT INTO telemetry (read_at, demand_w, register_wh) VALUES ('2026-01-06T11:00:00Z',400,1000)",
+      ).run();
+      api.telemetry = [];
+      const legacy = fakeOctopus(api);
+      await ingest(env, { fetchImpl: legacy.fetchImpl });
+      expect(legacy.asked.telemetry).toEqual(['2026-01-03T12:00:00Z']);
+      await env.DB.prepare(
+        "INSERT INTO telemetry (read_at, demand_w, register_wh, consumption_wh) VALUES ('2025-12-01T00:00:00Z',400,1000,250)",
+      ).run();
+      const recovered = fakeOctopus(api);
+      await ingest(env, { fetchImpl: recovered.fetchImpl });
+      expect(recovered.asked.telemetry).toEqual(['2026-01-03T12:00:00Z']);
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   it('skips telemetry without a Home Mini and still ingests billing data', async () => {
