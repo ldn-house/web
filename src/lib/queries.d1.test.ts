@@ -94,25 +94,26 @@ describe('queries', () => {
     expect(await ratesBetween(new Date().toISOString(), FAR_FUTURE)).toEqual([]);
   });
 
-  it('derives half-hourly kWh from register deltas and drops the bucket still filling', async () => {
+  it('uses period consumption without shifting it or bridging missing readings', async () => {
     const t0 = Date.parse('2026-01-06T00:00:00Z');
-    for (const [i, register] of [1000, 1250, 1600, 1700].entries()) {
+    for (const [i, wh] of [250, null, 350, 100].entries()) {
       await seed(
-        'INSERT INTO telemetry (read_at, demand_w, register_wh) VALUES (?,?,?)',
+        'INSERT INTO telemetry (read_at, demand_w, register_wh, consumption_wh) VALUES (?,?,?,?)',
         iso(t0 + i * 1800_000),
         400,
-        register,
+        1000 + i * 200,
+        wh,
       );
     }
-    // "Now" is inside the last bucket, so it is excluded; the first row only anchors the deltas.
+    // Null legacy data is omitted; the unfinished period is supplied by the live feed.
     const slots = await telemetryBetween(
       '2026-01-06T00:00:00Z',
       '2026-01-07T00:00:00Z',
       t0 + 3 * 1800_000 + 60_000,
     );
     expect(slots).toEqual([
-      { start: '2026-01-06T00:30:00Z', kwh: 0.25 },
-      { start: '2026-01-06T01:00:00Z', kwh: 0.35 },
+      { start: '2026-01-06T00:00:00Z', kwh: 0.25, through: '2026-01-06T00:30:00.000Z' },
+      { start: '2026-01-06T01:00:00Z', kwh: 0.35, through: '2026-01-06T01:30:00.000Z' },
     ]);
   });
 

@@ -15,6 +15,13 @@
       "when": 1788108513549,
       "tag": "0001_typical_magneto",
       "breakpoints": true
+    },
+    {
+      "idx": 2,
+      "version": "6",
+      "when": 1789316077415,
+      "tag": "0002_slow_harry_osborn",
+      "breakpoints": true
     }
   ]
 }

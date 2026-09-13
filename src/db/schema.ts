@@ -70,6 +70,8 @@ export const telemetry = sqliteTable('telemetry', {
   readAt: text('read_at').primaryKey(),
   demandW: real('demand_w').notNull(),
   registerWh: real('register_wh').notNull(),
+  /** API consumptionDelta for a completed half-hour; legacy/unfinished rows are null. */
+  consumptionWh: real('consumption_wh'),
 });
 
 export type TelemetryRow = typeof telemetry.$inferSelect;

@@ -3,6 +3,9 @@
  * Account discovery is GraphQL-only — `GET /v1/accounts/` returns 403.
  */
 
+import { type MeterSlot, meterSlots } from './consumption';
+import { addLondonDays, londonMidnight } from './format';
+
 const REST = 'https://api.octopus.energy/v1';
 const GRAPHQL = 'https://api.octopus.energy/v1/graphql/';
 
@@ -267,11 +270,14 @@ export interface TelemetryReading {
   demand: string;
   /** Cumulative import register, watt-hours. */
   consumption: string;
+  /** Energy consumed in this period, in Wh. Null means unavailable, not zero. */
+  consumptionDelta?: string | null;
 }
 
 export interface LiveDemand {
   readAt: string;
   watts: number;
+  consumption: MeterSlot[];
 }
 
 /** Half-hourly Home Mini telemetry; current to the minute, unlike the billing feed. */
@@ -284,7 +290,7 @@ export async function fetchTelemetry(
 ): Promise<TelemetryReading[]> {
   const token = await krakenToken(apiKey, fetchImpl);
   const data = await graphql<{ smartMeterTelemetry?: TelemetryReading[] | null }>(
-    'query($d: String!, $s: DateTime!, $e: DateTime!){ smartMeterTelemetry(deviceId:$d, grouping:HALF_HOURLY, start:$s, end:$e){ readAt demand consumption } }',
+    'query($d: String!, $s: DateTime!, $e: DateTime!){ smartMeterTelemetry(deviceId:$d, grouping:HALF_HOURLY, start:$s, end:$e){ readAt demand consumption consumptionDelta } }',
     { d: deviceId, s: start, e: end },
     fetchImpl,
     token,
@@ -292,7 +298,7 @@ export async function fetchTelemetry(
   return data.smartMeterTelemetry ?? [];
 }
 
-/** A near-real-time Home Mini demand reading, averaged over a ten-second bucket. */
+/** Live demand and recent half-hours, including the period still accumulating. */
 export async function fetchLiveDemand(
   apiKey: string,
   now = new Date(),
@@ -305,9 +311,19 @@ export async function fetchLiveDemand(
 
   const end = now.toISOString();
   const start = new Date(now.getTime() - 2 * 60_000).toISOString();
-  const data = await graphql<{ smartMeterTelemetry?: TelemetryReading[] | null }>(
-    'query($d: String!, $s: DateTime!, $e: DateTime!){ smartMeterTelemetry(deviceId:$d, grouping:TEN_SECONDS, start:$s, end:$e){ readAt demand consumption } }',
-    { d: deviceId, s: start, e: end },
+  const data = await graphql<{
+    smartMeterTelemetry?: TelemetryReading[] | null;
+    halfHourly?: TelemetryReading[] | null;
+  }>(
+    `query($d: String!, $s: DateTime!, $e: DateTime!, $h: DateTime!) {
+      smartMeterTelemetry(deviceId:$d, grouping:TEN_SECONDS, start:$s, end:$e) {
+        readAt demand
+      }
+      halfHourly: smartMeterTelemetry(deviceId:$d, grouping:HALF_HOURLY, start:$h, end:$e) {
+        readAt consumptionDelta
+      }
+    }`,
+    { d: deviceId, s: start, e: end, h: addLondonDays(londonMidnight(end), -1) },
     fetchImpl,
     token,
   );
@@ -315,7 +331,18 @@ export async function fetchLiveDemand(
     (best, reading) => (!best || reading.readAt > best.readAt ? reading : best),
     null,
   );
-  if (!latest || now.getTime() - Date.parse(latest.readAt) > 2 * 60_000) return null;
-  const watts = Number(latest.demand);
-  return Number.isFinite(watts) ? { readAt: latest.readAt, watts } : null;
+  if (!latest) return null;
+  const age = now.getTime() - Date.parse(latest.readAt);
+  if (!Number.isFinite(age) || age < 0 || age > 2 * 60_000) return null;
+  const watts =
+    latest.demand == null || latest.demand.trim() === ''
+      ? Number.NaN
+      : Number(latest.demand);
+  return Number.isFinite(watts)
+    ? {
+        readAt: latest.readAt,
+        watts,
+        consumption: meterSlots(data.halfHourly ?? [], latest.readAt),
+      }
+    : null;
 }

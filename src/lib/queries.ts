@@ -4,12 +4,9 @@ import { env } from 'cloudflare:workers';
 import { and, asc, desc, eq, gt, gte, isNull, lt, lte, or } from 'drizzle-orm';
 import { drizzle } from 'drizzle-orm/d1';
 import * as schema from '../db/schema';
+import { HALF_HOUR_MS, type MeterSlot, type Slot } from './consumption';
 
-export interface Slot {
-  /** ISO 8601 UTC, as stored. */
-  start: string;
-  kwh: number;
-}
+export type { Slot } from './consumption';
 
 export interface RateSlot {
   start: string;
@@ -88,40 +85,31 @@ export async function cappedRate(at: string): Promise<number | null> {
 }
 
 /**
- * Half-hourly kWh derived from the Home Mini's cumulative register, for slots
- * the billing feed has not delivered yet. The bucket containing `now` is still
- * filling and is left out.
+ * Completed Home Mini periods. Current consumption is supplied by the live feed.
+ * Legacy register averages cannot reliably reconstruct individual periods.
  */
 export async function telemetryBetween(
   from: string,
   to: string,
   now = Date.now(),
-): Promise<Slot[]> {
+): Promise<MeterSlot[]> {
   const rows = await db()
-    .select({ readAt: schema.telemetry.readAt, registerWh: schema.telemetry.registerWh })
+    .select({ readAt: schema.telemetry.readAt, wh: schema.telemetry.consumptionWh })
     .from(schema.telemetry)
-    .where(
-      and(
-        gte(
-          schema.telemetry.readAt,
-          new Date(Date.parse(from) - 1800_000).toISOString().replace(/\.\d{3}Z$/, 'Z'),
-        ),
-        lt(schema.telemetry.readAt, to),
-      ),
-    )
+    .where(and(gte(schema.telemetry.readAt, from), lt(schema.telemetry.readAt, to)))
     .orderBy(asc(schema.telemetry.readAt));
 
-  const cutoff = now - 1800_000;
-  const slots: Slot[] = [];
-  for (let i = 1; i < rows.length; i += 1) {
-    const row = rows[i]!;
-    if (row.readAt < from || Date.parse(row.readAt) > cutoff) continue;
-    slots.push({
-      start: row.readAt,
-      kwh: (row.registerWh - rows[i - 1]!.registerWh) / 1000,
-    });
-  }
-  return slots;
+  return rows.flatMap((row) => {
+    const end = Date.parse(row.readAt) + HALF_HOUR_MS;
+    if (row.wh == null || !Number.isFinite(row.wh) || row.wh < 0 || end > now) return [];
+    return [
+      {
+        start: row.readAt,
+        kwh: row.wh / 1000,
+        through: new Date(end).toISOString(),
+      },
+    ];
+  });
 }
 
 /** Stable SSR summary; null once the half-hourly Home Mini snapshots have gone quiet. */

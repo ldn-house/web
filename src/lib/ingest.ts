@@ -1,6 +1,7 @@
-import { sql } from 'drizzle-orm';
+import { isNotNull, sql } from 'drizzle-orm';
 import { type DrizzleD1Database, drizzle } from 'drizzle-orm/d1';
 import * as schema from '../db/schema';
+import { HALF_HOUR_MS, meterSlots } from './consumption';
 import {
   discoverAccountNumber,
   discoverDeviceId,
@@ -255,16 +256,27 @@ export async function ingest(
     if (deviceId) {
       const [mark] = await db
         .select({ latest: sql<string | null>`max(${schema.telemetry.readAt})` })
-        .from(schema.telemetry);
-      const start = mark?.latest
-        ? toUtcIso(new Date(Date.parse(mark.latest) - 24 * 3_600_000).toISOString())
-        : toUtcIso(new Date(Date.now() - 3 * 24 * 3_600_000).toISOString());
-      const readings = await fetchTelemetry(
-        key,
-        deviceId,
-        start,
-        toUtcIso(new Date().toISOString()),
-        fetchImpl,
+        .from(schema.telemetry)
+        .where(isNotNull(schema.telemetry.consumptionWh));
+      const readThrough = toUtcIso(new Date().toISOString());
+      const earliest = Date.parse(readThrough) - 3 * 24 * 3_600_000;
+      const start = toUtcIso(
+        new Date(
+          Math.max(
+            earliest,
+            mark?.latest ? Date.parse(mark.latest) - 24 * 3_600_000 : earliest,
+          ),
+        ).toISOString(),
+      );
+      const readings = await fetchTelemetry(key, deviceId, start, readThrough, fetchImpl);
+      // Allow the last ten-second reading to land before storing a period as complete.
+      const completed = new Map(
+        meterSlots(readings, readThrough)
+          .filter(
+            (slot) =>
+              Date.parse(slot.start) + HALF_HOUR_MS <= Date.parse(readThrough) - 120_000,
+          )
+          .map((slot) => [Date.parse(slot.start), slot.kwh * 1000]),
       );
       summary.telemetryRows += await upsertAll(
         db,
@@ -273,9 +285,10 @@ export async function ingest(
           readAt: toUtcIso(r.readAt),
           demandW: Number(r.demand),
           registerWh: Number(r.consumption),
+          consumptionWh: completed.get(Date.parse(r.readAt)) ?? null,
         })),
         [schema.telemetry.readAt],
-        ['demandW', 'registerWh'],
+        ['demandW', 'registerWh', 'consumptionWh'],
       );
     }
   } catch (error) {

@@ -168,6 +168,10 @@ describe('fetchLiveDemand', () => {
             { readAt: '2026-01-06T11:59:40Z', demand: '420', consumption: '1000' },
             { readAt: '2026-01-06T11:59:50Z', demand: '510', consumption: '1001' },
           ],
+          halfHourly: [
+            { readAt: '2026-01-06T11:00:00Z', consumptionDelta: '250' },
+            { readAt: '2026-01-06T11:30:00Z', consumptionDelta: '120' },
+          ],
         },
       },
     ];
@@ -178,12 +182,29 @@ describe('fetchLiveDemand', () => {
 
     await expect(
       fetchLiveDemand(KEY, new Date('2026-01-06T12:00:00Z'), fetchImpl),
-    ).resolves.toEqual({ readAt: '2026-01-06T11:59:50Z', watts: 510 });
+    ).resolves.toEqual({
+      readAt: '2026-01-06T11:59:50Z',
+      watts: 510,
+      consumption: [
+        {
+          start: '2026-01-06T11:00:00.000Z',
+          kwh: 0.25,
+          through: '2026-01-06T11:30:00.000Z',
+        },
+        {
+          start: '2026-01-06T11:30:00.000Z',
+          kwh: 0.12,
+          through: '2026-01-06T11:59:50.000Z',
+        },
+      ],
+    });
     expect(bodies.at(-1)!.query).toContain('grouping:TEN_SECONDS');
+    expect(bodies.at(-1)!.query).toContain('grouping:HALF_HOURLY');
     expect(bodies.at(-1)!.variables).toMatchObject({
       d: 'SYNTH-DEVICE',
       s: '2026-01-06T11:58:00.000Z',
       e: '2026-01-06T12:00:00.000Z',
+      h: '2026-01-05T00:00:00Z',
     });
   });
 
