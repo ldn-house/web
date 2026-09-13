@@ -5,6 +5,7 @@ import { and, asc, desc, eq, gt, gte, isNull, lt, lte, or } from 'drizzle-orm';
 import { drizzle } from 'drizzle-orm/d1';
 import * as schema from '../db/schema';
 import { HALF_HOUR_MS, type MeterSlot, type Slot } from './consumption';
+import type { UsageRate } from './cost';
 
 export type { Slot } from './consumption';
 
@@ -65,6 +66,58 @@ export async function ratesBetween(from: string, to: string): Promise<RateSlot[]
       ),
     )
     .orderBy(asc(schema.unitRates.validFrom));
+}
+
+/** Actual usage follows each agreement, including tariffs that have since ended. */
+export async function usageRatesBetween(from: string, to: string): Promise<UsageRate[]> {
+  const rows = await db()
+    .select({
+      rateFrom: schema.unitRates.validFrom,
+      rateTo: schema.unitRates.validTo,
+      agreementFrom: schema.agreements.validFrom,
+      agreementTo: schema.agreements.validTo,
+      pIncVat: schema.unitRates.pIncVat,
+    })
+    .from(schema.agreements)
+    .innerJoin(
+      schema.unitRates,
+      eq(schema.unitRates.tariffCode, schema.agreements.tariffCode),
+    )
+    .where(
+      and(
+        lt(schema.agreements.validFrom, to),
+        or(isNull(schema.agreements.validTo), gt(schema.agreements.validTo, from)),
+        lt(schema.unitRates.validFrom, to),
+        or(isNull(schema.unitRates.validTo), gt(schema.unitRates.validTo, from)),
+        // As with the price-cap comparison, use Direct Debit where a tariff
+        // distinguishes payment methods. Agile's method-independent rows use ANY.
+        or(
+          eq(schema.unitRates.paymentMethod, CAP_PAYMENT_METHOD),
+          eq(schema.unitRates.paymentMethod, 'ANY'),
+        ),
+      ),
+    );
+  return rows.flatMap((row) => {
+    const start = Math.max(
+      Date.parse(from),
+      Date.parse(row.rateFrom),
+      Date.parse(row.agreementFrom),
+    );
+    const end = Math.min(
+      Date.parse(to),
+      row.rateTo === null ? Infinity : Date.parse(row.rateTo),
+      row.agreementTo === null ? Infinity : Date.parse(row.agreementTo),
+    );
+    return start < end
+      ? [
+          {
+            from: new Date(start).toISOString(),
+            to: new Date(end).toISOString(),
+            pIncVat: row.pIncVat,
+          },
+        ]
+      : [];
+  });
 }
 
 export async function cappedRate(at: string): Promise<number | null> {

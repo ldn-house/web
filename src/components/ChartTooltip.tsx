@@ -1,9 +1,11 @@
+import { Show } from 'solid-js';
 import { WIDTH } from './TimeAxis';
 
 export function ChartTooltip(props: {
   anchorX: number;
   heading: string;
   value: string;
+  secondary?: string;
   detail: string;
   swatchFill?: string;
 }) {
@@ -26,6 +28,11 @@ export function ChartTooltip(props: {
           <p class="text-sm leading-none font-medium tabular-nums text-neutral-100">
             {props.value}
           </p>
+          <Show when={props.secondary}>
+            <p class="mt-1 text-[11px] leading-4 tabular-nums text-neutral-300">
+              {props.secondary}
+            </p>
+          </Show>
           <p class="mt-1 truncate text-[10px] leading-none text-neutral-500">
             {props.detail}
           </p>

@@ -23,6 +23,7 @@ import {
   ratesBetween,
   recentAverageDemand,
   telemetryBetween,
+  usageRatesBetween,
 } from './lib/queries';
 import { startVisibilityPolling } from './lib/visibility-polling';
 
@@ -103,6 +104,10 @@ export default function App() {
   const rates = createMemo(async () => {
     period();
     return ratesBetween(queryWindow().from, queryWindow().to);
+  });
+  const usageRates = createMemo(async () => {
+    period();
+    return usageRatesBetween(queryWindow().from, queryWindow().to);
   });
   const chartWindow = createMemo<ChartWindow>(() => {
     const bounds = recentDayBounds(
@@ -297,7 +302,12 @@ export default function App() {
           when={usage().length}
           fallback={<p class="text-sm text-neutral-500">No readings yet.</p>}
         >
-          <UsageChart slots={usage()} window={chartWindow()} live={!!liveDemand()} />
+          <UsageChart
+            slots={usage()}
+            rates={usageRates()}
+            window={chartWindow()}
+            live={!!liveDemand()}
+          />
           <p class="mt-3 text-xs text-neutral-500">
             {total().toFixed(1)} kWh since {londonDay(usage()[0]!.start)}
             <Show when={usage().at(-1)}>
@@ -308,6 +318,9 @@ export default function App() {
                 </>
               )}
             </Show>
+          </p>
+          <p class="mt-1 text-xs text-neutral-500">
+            Usage costs include VAT, excluding standing charge.
           </p>
         </Show>
       </Panel>

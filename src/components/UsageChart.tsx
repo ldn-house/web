@@ -9,7 +9,8 @@ import {
 } from 'solid-js';
 import { linearScale, seriesCeiling, ticks } from '../lib/chart';
 import { HALF_HOUR_MS, isPartialSlot, type UsageSlot } from '../lib/consumption';
-import { londonDay, londonTimeRange } from '../lib/format';
+import { costForSlot, type UsageRate } from '../lib/cost';
+import { londonDay, londonTimeRange, pounds } from '../lib/format';
 import { ChartTooltip } from './ChartTooltip';
 import { PAD, TimeAxis, WIDTH, type Window } from './TimeAxis';
 
@@ -26,6 +27,7 @@ const SOURCE_LABEL = {
 
 export function UsageChart(props: {
   slots: readonly UsageSlot[];
+  rates: readonly UsageRate[];
   window: Window;
   live: boolean;
 }) {
@@ -80,14 +82,24 @@ export function UsageChart(props: {
     isPartialSlot(slot) &&
     Date.parse(props.window.now) - Date.parse(slot.through) < 120_000;
 
+  const tooltipCost = (slot: UsageSlot) => {
+    const cost = costForSlot(slot, props.rates);
+    return cost
+      ? `${pounds(cost.gbp)} · ${cost.pIncVat.toFixed(2)}p/kWh`
+      : 'Cost unavailable';
+  };
   const ariaLabel = (slot: UsageSlot) => {
     const when = `${londonDay(slot.start)} ${londonTimeRange(slot.start)}`;
     const source = SOURCE_LABEL[slot.source];
     const kwh = `${slot.kwh.toFixed(2)} kilowatt hours`;
-    if (!isPartialSlot(slot)) return `${when}, ${kwh}, ${source}`;
+    const cost = costForSlot(slot, props.rates);
+    const price = cost
+      ? `${pounds(cost.gbp)}, at ${cost.pIncVat.toFixed(2)} pence per kilowatt hour, including VAT, excluding standing charge`
+      : 'cost unavailable';
+    if (!isPartialSlot(slot)) return `${when}, ${kwh}, ${price}, ${source}`;
     return isRunning(slot)
-      ? `${when}, in progress, ${kwh}, ${source}`
-      : `${when}, incomplete period, ${kwh}, ${source}`;
+      ? `${when}, in progress, ${kwh}, ${price}, ${source}`
+      : `${when}, incomplete period, ${kwh}, ${price}, ${source}`;
   };
 
   const moveFocus = (event: KeyboardEvent, start: string) => {
@@ -234,6 +246,7 @@ export function UsageChart(props: {
             anchorX={anchorX(slot())}
             heading={`${londonDay(slot().start)} · ${londonTimeRange(slot().start)}`}
             value={`${slot().kwh.toFixed(2)} kWh`}
+            secondary={tooltipCost(slot())}
             detail={`${SOURCE_LABEL[slot().source]}${isPartialSlot(slot()) ? ' · Partial' : ''}`}
             swatchFill={isPartialSlot(slot()) ? stripeFill : undefined}
           />
