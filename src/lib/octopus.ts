@@ -5,6 +5,7 @@
 
 import { type MeterSlot, meterSlots } from './consumption';
 import { addLondonDays, londonMidnight } from './format';
+import { retryAfterMs } from './live-polling';
 
 const REST = 'https://api.octopus.energy/v1';
 const GRAPHQL = 'https://api.octopus.energy/v1/graphql/';
@@ -51,9 +52,17 @@ export class OctopusError extends Error {
   constructor(
     message: string,
     readonly status?: number,
+    readonly code?: string,
+    readonly retryAfterSeconds?: number,
   ) {
     super(message);
     this.name = 'OctopusError';
+  }
+
+  get rateLimited() {
+    return (
+      this.status === 429 || this.code === 'KT-CT-1199' || this.code === 'KT-GB-4042'
+    );
   }
 }
 
@@ -107,8 +116,32 @@ async function graphql<T>(
     },
     body: JSON.stringify({ query, variables }),
   });
-  const body = (await response.json()) as { data?: T; errors?: { message: string }[] };
-  if (body.errors?.length) throw new OctopusError(body.errors[0]!.message);
+  const retry = retryAfterMs(response.headers.get('Retry-After'));
+  if (!response.ok) {
+    throw new OctopusError(
+      'GraphQL request failed',
+      response.status,
+      undefined,
+      retry === null ? undefined : Math.ceil(retry / 1000),
+    );
+  }
+  const body = (await response.json()) as {
+    data?: T;
+    errors?: { message: string; extensions?: { errorCode?: string } }[];
+  };
+  if (body.errors?.length) {
+    // Preserve throttling even when another field also failed in this response.
+    const error =
+      body.errors.find((error) =>
+        ['KT-CT-1199', 'KT-GB-4042'].includes(error.extensions?.errorCode ?? ''),
+      ) ?? body.errors[0]!;
+    throw new OctopusError(
+      error.message,
+      response.status,
+      error.extensions?.errorCode,
+      retry === null ? undefined : Math.ceil(retry / 1000),
+    );
+  }
   return body.data as T;
 }
 
@@ -305,6 +338,66 @@ export async function fetchLiveDemand(
   fetchImpl: Fetcher = fetch,
 ): Promise<LiveDemand | null> {
   const token = await krakenToken(apiKey, fetchImpl);
+  try {
+    return await liveDemandWithToken(token, now, fetchImpl);
+  } catch (error) {
+    if (!(error instanceof OctopusError) || !error.rateLimited) throw error;
+    // The GraphQL error often has no Retry-After. Ask for the actual reset time
+    // once, without making another telemetry request. If unavailable, the caller
+    // uses a conservative one-hour cooldown.
+    const cooldown = await rateLimitCooldown(token, now.getTime(), fetchImpl).catch(
+      () => undefined,
+    );
+    throw new OctopusError(
+      error.message,
+      error.status,
+      error.code,
+      Math.max(error.retryAfterSeconds ?? 0, cooldown ?? 0) || undefined,
+    );
+  }
+}
+
+async function rateLimitCooldown(token: string, now: number, fetchImpl: Fetcher) {
+  const data = await graphql<{
+    rateLimitInfo?: {
+      pointsAllowanceRateLimit?: { ttl?: number; isBlocked?: boolean };
+      fieldSpecificRateLimits?: {
+        edges: { node?: { ttl?: number; isBlocked?: boolean } }[];
+      };
+    };
+  }>(
+    `query {
+    rateLimitInfo {
+      pointsAllowanceRateLimit { ttl isBlocked }
+      fieldSpecificRateLimits(first:10, fields:["Query.smartMeterTelemetry", "Mutation.obtainKrakenToken"]) {
+        edges { node { ttl isBlocked } }
+      }
+    }
+  }`,
+    {},
+    fetchImpl,
+    token,
+  );
+  const info = data.rateLimitInfo;
+  const limits = [
+    info?.pointsAllowanceRateLimit,
+    ...(info?.fieldSpecificRateLimits?.edges ?? []).map((edge) => edge.node),
+  ];
+  const delays = limits.flatMap((limit) => {
+    if (!limit?.isBlocked || !Number.isFinite(limit.ttl) || limit.ttl! <= 0) return [];
+    // The live API returns epoch seconds; some schema versions document a duration.
+    return [
+      Math.max(0, limit.ttl! > 1_000_000_000 ? limit.ttl! - now / 1000 : limit.ttl!),
+    ];
+  });
+  return delays.length ? Math.ceil(Math.max(...delays)) + 5 : undefined;
+}
+
+async function liveDemandWithToken(
+  token: string,
+  now: Date,
+  fetchImpl: Fetcher,
+): Promise<LiveDemand | null> {
   const accountNumber = await discoverAccountNumberWithToken(token, fetchImpl);
   const deviceId = await discoverDeviceIdWithToken(accountNumber, token, fetchImpl);
   if (!deviceId) return null;

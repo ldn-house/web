@@ -19,6 +19,16 @@ cannot resolve `cloudflare:test`.
 
 ## Deployment
 
+Home Mini readings refresh on demand at most every two minutes. D1 shares the
+reading and the next fetch time across visitors and Worker instances, including
+cooldowns when Octopus throttles requests. The power label shows the measurement
+time; readings older than five minutes give way to the hourly average.
+
+Each refresh uses two telemetry queries, so one deployment makes at most 60 per
+hour. Local servers and other integrations using the same Octopus account share
+its upstream quota. A throttle uses Octopus's reset time or `Retry-After`, falling
+back to one hour when neither is available.
+
 A GitHub Actions workflow owns deploys. Workers Builds is disconnected.
 
 | Trigger | Effect |
