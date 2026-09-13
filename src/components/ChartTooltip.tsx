@@ -5,6 +5,7 @@ export function ChartTooltip(props: {
   heading: string;
   value: string;
   detail: string;
+  swatchFill?: string;
 }) {
   return (
     <div
@@ -18,7 +19,9 @@ export function ChartTooltip(props: {
         {props.heading}
       </p>
       <div class="mt-1 flex items-center gap-2">
-        <span class="h-5 w-0.5 shrink-0 rounded-full bg-accent" />
+        <svg aria-hidden="true" width="2" height="20" class="shrink-0 text-accent">
+          <rect width="2" height="20" rx="1" fill={props.swatchFill ?? 'currentColor'} />
+        </svg>
         <div class="min-w-0">
           <p class="text-sm leading-none font-medium tabular-nums text-neutral-100">
             {props.value}
