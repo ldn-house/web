@@ -1,5 +1,20 @@
 import { describe, expect, it } from 'vitest';
-import { addLondonDays, dayTicks, londonMidnight, londonTimeRange } from './format';
+import {
+  addLondonDays,
+  dayTicks,
+  londonMidnight,
+  londonTimeRange,
+  pounds,
+} from './format';
+
+describe('pounds', () => {
+  it('formats pounds to pennies, preserving credits without displaying negative zero', () => {
+    expect(pounds(0.125)).toBe('£0.13');
+    expect(pounds(12.3)).toBe('£12.30');
+    expect(pounds(-0.125)).toBe('-£0.13');
+    expect(pounds(-0.004)).toBe('£0.00');
+  });
+});
 
 describe('londonTimeRange', () => {
   it('formats a half-hour settlement period', () => {

@@ -1,10 +1,12 @@
 import { env } from 'cloudflare:test';
 import { beforeEach, describe, expect, it } from 'vitest';
+import { costForSlot } from './cost';
 import {
   consumptionBetween,
   ratesBetween,
   recentAverageDemand,
   telemetryBetween,
+  usageRatesBetween,
 } from './queries';
 
 const AGILE = 'E-1R-AGILE-24-10-01-C';
@@ -92,6 +94,73 @@ describe('queries', () => {
 
   it('returns nothing when no agreement covers now', async () => {
     expect(await ratesBetween(new Date().toISOString(), FAR_FUTURE)).toEqual([]);
+  });
+
+  it('prices usage using the agreement at the time, including long-running Direct Debit rates', async () => {
+    const switchAt = '2026-01-06T12:00:00Z';
+    await seed(
+      'INSERT INTO agreements (tariff_code, valid_from, valid_to) VALUES (?,?,?)',
+      FLEXIBLE,
+      '2025-01-01T00:00:00Z',
+      switchAt,
+    );
+    await seed(
+      'INSERT INTO agreements (tariff_code, valid_from, valid_to) VALUES (?,?,NULL)',
+      AGILE,
+      switchAt,
+    );
+    for (const [tariff, method, price] of [
+      [FLEXIBLE, 'DIRECT_DEBIT', 25],
+      [FLEXIBLE, 'NON_DIRECT_DEBIT', 30],
+      // A published Agile rate must not price usage before its agreement began.
+      [AGILE, 'ANY', 10],
+    ] as const) {
+      await seed(
+        'INSERT INTO unit_rates (tariff_code, valid_from, payment_method, valid_to, p_inc_vat, p_exc_vat) VALUES (?,?,?,NULL,?,?)',
+        tariff,
+        '2026-01-01T00:00:00Z',
+        method,
+        price,
+        price / 1.05,
+      );
+    }
+    const rates = await usageRatesBetween('2026-01-06T11:30:00Z', '2026-01-06T12:30:00Z');
+    expect(rates).toHaveLength(2);
+    expect(costForSlot({ start: '2026-01-06T11:30:00Z', kwh: 1 }, rates)?.gbp).toBe(0.25);
+    expect(costForSlot({ start: switchAt, kwh: 1 }, rates)?.gbp).toBe(0.1);
+  });
+
+  it('does not stretch an expired price or agreement into missing periods', async () => {
+    await seed(
+      'INSERT INTO agreements (tariff_code, valid_from, valid_to) VALUES (?,?,?)',
+      AGILE,
+      '2026-01-06T12:00:00Z',
+      '2026-01-06T13:00:00Z',
+    );
+    for (const [start, end] of [
+      ['2026-01-06T12:00:00Z', '2026-01-06T12:30:00Z'],
+      ['2026-01-06T13:00:00Z', '2026-01-06T13:30:00Z'],
+    ]) {
+      await seed(
+        'INSERT INTO unit_rates (tariff_code, valid_from, payment_method, valid_to, p_inc_vat, p_exc_vat) VALUES (?,?,?, ?,0,0)',
+        AGILE,
+        start,
+        'ANY',
+        end,
+      );
+    }
+    const rates = await usageRatesBetween('2026-01-06T12:00:00Z', '2026-01-06T14:00:00Z');
+    expect(rates).toEqual([
+      { from: '2026-01-06T12:00:00.000Z', to: '2026-01-06T12:30:00.000Z', pIncVat: 0 },
+    ]);
+    expect(costForSlot({ start: '2026-01-06T12:30:00Z', kwh: 1 }, rates)).toBeNull();
+    expect(costForSlot({ start: '2026-01-06T13:00:00Z', kwh: 1 }, rates)).toBeNull();
+  });
+
+  it('returns no usage rates without an agreement', async () => {
+    expect(
+      await usageRatesBetween('2026-01-06T00:00:00Z', '2026-01-07T00:00:00Z'),
+    ).toEqual([]);
   });
 
   it('uses period consumption without shifting it or bridging missing readings', async () => {

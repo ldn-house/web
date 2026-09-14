@@ -1,5 +1,12 @@
 const LONDON = 'Europe/London';
 
+const sterling = new Intl.NumberFormat('en-GB', { style: 'currency', currency: 'GBP' });
+
+export function pounds(value: number): string {
+  // Tiny negative rates should not display a misleading minus on a zero cost.
+  return sterling.format(Math.abs(value) < 0.005 ? 0 : value);
+}
+
 export function londonTime(iso: string): string {
   return new Intl.DateTimeFormat('en-GB', {
     timeZone: LONDON,
