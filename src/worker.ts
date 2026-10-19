@@ -58,22 +58,66 @@ const UNGATED = new Set([
 
 export default {
   async fetch(request, env, ctx) {
-    const { pathname } = new URL(request.url);
-    const isApi = pathname === '/api' || pathname.startsWith('/api/');
-    if (UNGATED.has(pathname)) return api.fetch(request, env, ctx);
-    if (pathname === '/enrol') return enrolmentLinkPage(request, env);
+    const url = new URL(request.url);
+    // Exact host only; redirect before enrolment so its form uses the apex origin.
+    if (url.hostname === 'www.ldn.house') {
+      url.protocol = 'https:';
+      url.host = 'ldn.house';
+      url.port = '';
+      return Response.redirect(url.href, 301);
+    }
 
-    const visitor = await resolveVisitor(request, env);
-    const now = simulatedNow(new URL(request.url));
-    const upstream = await withVisitor({ home: visitor.home, now }, () =>
-      isApi ? api.fetch(request, env, ctx) : handleRequest(request),
-    );
-    // Pages, server functions and the live API all differ between home and away.
-    const response = new Response(upstream.body, upstream);
-    response.headers.set('Cache-Control', 'private, no-store');
-    response.headers.append('Vary', 'Cookie');
-    for (const cookie of visitor.cookies) response.headers.append('Set-Cookie', cookie);
-    return response;
+    const { pathname } = url;
+    const isApi = pathname === '/api' || pathname.startsWith('/api/');
+    let response: Response;
+    if (pathname === '/robots.txt') {
+      response = new Response(
+        url.hostname === 'ldn.house'
+          ? 'User-agent: *\nAllow: /\nDisallow: /api\nDisallow: /_server\nDisallow: /enrol\n'
+          : 'User-agent: *\nDisallow: /\n',
+        { headers: { 'Content-Type': 'text/plain; charset=utf-8' } },
+      );
+    } else if (UNGATED.has(pathname)) {
+      // Enrolment endpoints manage their own cookies and authentication.
+      response = await api.fetch(request, env, ctx);
+    } else if (pathname === '/enrol') {
+      response = await enrolmentLinkPage(request, env);
+    } else if (isApi || pathname === '/_server' || pathname === '/') {
+      if (pathname === '/' && request.method !== 'GET' && request.method !== 'HEAD') {
+        response = new Response(null, { status: 405, headers: { Allow: 'GET, HEAD' } });
+      } else {
+        // Keep the visitor context around both streamed SSR and server functions.
+        const visitor = await resolveVisitor(request, env);
+        const now = simulatedNow(url);
+        const upstream = await withVisitor({ home: visitor.home, now }, () =>
+          isApi ? api.fetch(request, env, ctx) : handleRequest(request),
+        );
+        response = new Response(upstream.body, upstream);
+        response.headers.set('Cache-Control', 'private, no-store');
+        response.headers.append('Vary', 'Cookie');
+        for (const cookie of visitor.cookies)
+          response.headers.append('Set-Cookie', cookie);
+      }
+    } else {
+      response = await env.ASSETS.fetch(request);
+      if (response.status === 404 || pathname === '/404.html') {
+        const notFound = await env.ASSETS.fetch(new URL('/404.html', url));
+        response = new Response(notFound.body, {
+          status: 404,
+          headers: { 'Content-Type': 'text/html; charset=utf-8' },
+        });
+      }
+    }
+
+    const headers = new Headers(response.headers);
+    if (url.hostname !== 'ldn.house' || response.status === 404) {
+      headers.set('X-Robots-Tag', 'noindex');
+    }
+    return new Response(request.method === 'HEAD' ? null : response.body, {
+      status: response.status,
+      statusText: response.statusText,
+      headers,
+    });
   },
 
   // The first tick backfills: an empty table has no watermark to resume from.

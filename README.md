@@ -1,7 +1,8 @@
 # ldn.house
 
 Energy and climate data for one house in London. Server-rendered Solid on a
-Cloudflare Worker, deployed to [ldn.house](https://ldn.house).
+Cloudflare Worker at [preview.ldn.house](https://preview.ldn.house), with
+[ldn.house](https://ldn.house) prepared as the canonical home.
 
 ## Commands
 
@@ -52,17 +53,36 @@ inside older periods, and cannot repair historical gaps by itself.
 
 A GitHub Actions workflow owns deploys. Workers Builds is disconnected.
 
+**Apex launch is held pending the live-power privacy decision.** Keep the launch
+PR in draft; merging to `main` publishes the apex, so draft status alone is not a
+deployment guard. Complete the [launch checklist](docs/apex-launch.md) first.
+Production config binds exactly `ldn.house`, `www.ldn.house` and
+`preview.ldn.house`; `dashboard.ldn.house` remains separate. The Worker redirects
+`www` to HTTPS apex with a 301, preserving path and query, including asset URLs.
+`preview.ldn.house` keeps serving the app. The canonical and social URLs use the
+apex; preview hosts discourage indexing via `robots.txt` and `X-Robots-Tag`.
+These are crawler hints, not access controls or a live-data privacy solution.
+
 | Trigger | Effect |
 |---|---|
 | Pull request | Provisions `ldn-house-pr-N` (Worker and database), migrates, deploys, seeds, comments the URL |
 | Push to `main` | Migrates the production database, then deploys |
 | Pull request closed | Deletes the PR's Worker and database |
 
+Draft PRs also deploy previews. The generated config drops all production routes
+and cron triggers, retaining an isolated fixture-seeded database and a
+`workers.dev` URL; the workflow still comments that URL. No Octopus request
+pattern changes: the apex and named preview share the same production Worker,
+D1 cache and refresh gate.
+
 Migrations run before the production deploy, which is only safe while they stay
 additive — a destructive change needs expand/contract across two deploys.
 
 Repository secrets: `CLOUDFLARE_ACCOUNT_ID`, and a `CLOUDFLARE_API_TOKEN` with
 Workers Scripts edit, D1 edit and Workers Routes edit.
+Workers Routes must include the `ldn.house` zone. Custom Domains create their own
+DNS records and certificates; DNS edit is not needed for that operation. See the
+checklist for permission evidence, conflict checks and remaining manual steps.
 
 ## Home access
 
