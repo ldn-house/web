@@ -4,7 +4,9 @@ import {
   dayTicks,
   londonMidnight,
   londonTimeRange,
+  londonTimeSpan,
   pounds,
+  timeUntil,
 } from './format';
 
 describe('pounds', () => {
@@ -56,5 +58,32 @@ describe('dayTicks', () => {
       ['Fri 16 Jan', true],
       ['12:00', false],
     ]);
+  });
+});
+
+describe('timeUntil', () => {
+  const now = '2026-10-19T13:56:30Z';
+  it('rounds up to the minute and says now once started', () => {
+    expect(timeUntil('2026-10-19T13:30:00Z', now)).toBe('now');
+    expect(timeUntil('2026-10-19T14:00:00Z', now)).toBe('in 4m');
+    expect(timeUntil('2026-10-19T14:56:30Z', now)).toBe('in 1h');
+    expect(timeUntil('2026-10-19T22:00:00Z', now)).toBe('in 8h 4m');
+  });
+});
+
+describe('londonTimeSpan', () => {
+  it('names the zone only around a clock change', () => {
+    expect(londonTimeSpan('2026-10-19T21:00:00Z', '2026-10-19T22:00:00Z')).toBe(
+      '22:00–23:00',
+    );
+    expect(londonTimeSpan('2026-10-25T00:00:00Z', '2026-10-25T01:00:00Z')).toBe(
+      '01:00 BST–01:00 GMT',
+    );
+    expect(londonTimeSpan('2026-10-25T01:30:00Z', '2026-10-25T02:30:00Z')).toBe(
+      '01:30 GMT–02:30 GMT',
+    );
+    expect(londonTimeSpan('2026-10-25T02:00:00Z', '2026-10-25T03:00:00Z')).toBe(
+      '02:00–03:00',
+    );
   });
 });
