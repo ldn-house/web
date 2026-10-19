@@ -175,8 +175,8 @@ export function createTreePlayer(
     const scale = Math.min(width / frame.width, height / frame.height);
     gl.uniform2f(uScale, (2 * scale) / width, (2 * scale) / height);
     gl.uniform1f(uSize, scale * 0.13);
-    dirty = true;
-    schedule();
+    // Resizing clears the canvas; redraw now rather than show a black frame.
+    if (!stopped) draw(Math.floor(position) % count);
   };
   const observer = new ResizeObserver(resize);
   observer.observe(canvas);
