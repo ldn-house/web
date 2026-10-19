@@ -78,15 +78,16 @@ bunx wrangler secret put HOME_COOKIE_SECRET         # signs cookies; rotate to r
 bunx wrangler secret put HOME_ASSISTANT_WEBHOOK_URL # http://<HA LAN address>:8123/api/webhook/<id>
 ```
 
-A device enrols from home by asking for a code, which the page sends to the
-local-only Home Assistant webhook. Home Assistant then confirms it:
+A device enrols from home by asking for a code and four check digits, which
+the page sends to the local-only Home Assistant webhook. Once a household phone
+approves the digits shown on ldn.house, Home Assistant confirms both:
 
 ```http
 POST /api/home/confirm
 Authorization: Bearer <HOME_ASSISTANT_TOKEN>
 Content-Type: application/json
 
-{"code": "<code from the webhook's ?code=>"}
+{"code": "<the webhook's ?code=>", "check": "<the webhook's ?check=>"}
 ```
 
 Away from home, Home Assistant mints a one-time link, `{"url": …, "expiresAt": …}`,
