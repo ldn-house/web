@@ -1,13 +1,13 @@
 import { createExecutionContext, env, waitOnExecutionContext } from 'cloudflare:test';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { addLondonDays, londonMidnight } from './lib/format';
-import { HOME_ADDRESS_TTL_MS } from './lib/home';
+import { signHomeCookie } from './lib/home';
 import { consumptionBetween, recentAverageDemand, telemetryBetween } from './lib/queries';
 import worker from './worker';
 
-const HOME_IP = '192.0.2.10';
-const AWAY_IP = '198.51.100.7';
-const REPORT_TOKEN = 'synthetic-report-token';
+const IP = '198.51.100.7';
+const HA_TOKEN = 'synthetic-ha-token';
+const WEBHOOK = 'http://192.0.2.20:8123/api/webhook/synthetic-webhook-id';
 const COOKIE_SECRET = 'synthetic-cookie-secret';
 const HH = 30 * 60_000;
 const iso = (ms: number) => new Date(ms).toISOString().replace(/\.\d{3}Z$/, 'Z');
@@ -22,7 +22,8 @@ const TODAY_MARKERS = ['0.2718', '0.3141', '3141', '4242'];
 
 const bindings = {
   ...env,
-  HOME_REPORT_TOKEN: REPORT_TOKEN,
+  HOME_ASSISTANT_TOKEN: HA_TOKEN,
+  HOME_ASSISTANT_WEBHOOK_URL: WEBHOOK,
   HOME_COOKIE_SECRET: COOKIE_SECRET,
 } as Env;
 
@@ -31,7 +32,7 @@ async function call(
   init: { ip?: string; cookie?: string; host?: string } & RequestInit = {},
   overrides: Partial<Env> = {},
 ) {
-  const { ip, cookie, host = 'https://ldn.house', ...rest } = init;
+  const { ip = IP, cookie, host = 'https://ldn.house', ...rest } = init;
   const headers = new Headers(rest.headers);
   if (ip) headers.set('CF-Connecting-IP', ip);
   if (cookie) headers.set('Cookie', cookie);
@@ -69,18 +70,25 @@ function callServer(
   });
 }
 
-async function reportHome(reportedAt: number, ipv6Prefix: string | null = null) {
-  await env.DB.prepare(
-    `INSERT INTO home_address (id, ipv4, ipv6_prefix, reported_at) VALUES (1, ?, ?, ?)
-    ON CONFLICT(id) DO UPDATE SET ipv4 = excluded.ipv4, ipv6_prefix = excluded.ipv6_prefix,
-      reported_at = excluded.reported_at`,
-  )
-    .bind(HOME_IP, ipv6Prefix, reportedAt)
-    .run();
-}
+const homeCookie = async (secret = COOKIE_SECRET) =>
+  `__Host-ldn-home=${await signHomeCookie(secret, Date.now())}`;
 
-const cookieFrom = (response: Response) =>
-  response.headers.get('Set-Cookie')?.split(';')[0] ?? undefined;
+/** name=value pairs from every Set-Cookie, as a browser would send them back. */
+const cookiesFrom = (response: Response, previous = '') => {
+  const jar = new Map(
+    previous
+      .split('; ')
+      .filter(Boolean)
+      .map((pair) => pair.split('=') as [string, string]),
+  );
+  for (const header of response.headers.getSetCookie()) {
+    const [pair] = header.split(';');
+    const [name, value] = pair!.split('=') as [string, string];
+    if (/Max-Age=0/.test(header)) jar.delete(name);
+    else jar.set(name, value);
+  }
+  return [...jar].map(([name, value]) => `${name}=${value}`).join('; ');
+};
 
 function expectNoTodayData(body: string) {
   for (const marker of TODAY_MARKERS) expect(body).not.toContain(marker);
@@ -98,7 +106,8 @@ describe('home gate', () => {
       env.DB.prepare('DELETE FROM consumption'),
       env.DB.prepare('DELETE FROM telemetry'),
       env.DB.prepare('DELETE FROM live_power_cache'),
-      env.DB.prepare('DELETE FROM home_address'),
+      env.DB.prepare('DELETE FROM enrol_codes'),
+      env.DB.prepare('DELETE FROM enrol_failures'),
       env.DB.prepare(
         "INSERT INTO consumption VALUES (?, ?, ?, 'SYNTH00000001'), (?, ?, ?, 'SYNTH00000001')",
       ).bind(
@@ -137,8 +146,7 @@ describe('home gate', () => {
 
   describe('outsiders', () => {
     it('get whole days through yesterday and nothing from today', async () => {
-      await reportHome(now - 60_000);
-      const { response, body } = await call('/', { ip: AWAY_IP });
+      const { response, body } = await call('/');
       expect(response.status).toBe(200);
       expectNoTodayData(body);
       // The hydration payload is in the same document.
@@ -146,13 +154,14 @@ describe('home gate', () => {
       expect(body).toContain(String(YESTERDAY_KWH));
       expect(body).toContain('spent yesterday');
       expect(body).toContain('Usage is shown to the end of yesterday.');
+      expect(body).toContain('Enrol this device');
       expect(response.headers.get('Set-Cookie')).toBeNull();
       expect(response.headers.get('Cache-Control')).toBe('private, no-store');
     });
 
     it('cannot reach live power, and never cause an Octopus request', async () => {
       const upstream = vi.spyOn(globalThis, 'fetch');
-      const { response, body } = await call('/api/live-power', { ip: AWAY_IP });
+      const { response, body } = await call('/api/live-power');
       expect(response.status).toBe(403);
       expect(JSON.parse(body)).toEqual({ error: 'home only' });
       expect(upstream).not.toHaveBeenCalled();
@@ -163,7 +172,6 @@ describe('home gate', () => {
     });
 
     it('get nothing from today out of /_server, whatever the arguments', async () => {
-      await reportHome(now - 60_000);
       const FAR = Date.parse('2999-01-01T00:00:00Z');
       // Text that sorts after today's timestamps, parseable as a date or not.
       for (const to of ['2999-01-01T00:00:00Z', '9/1/2020', 'not a date', 'z']) {
@@ -171,50 +179,35 @@ describe('home gate', () => {
           [consumptionBetween, [yesterday, to]],
           [telemetryBetween, [yesterday, to, FAR]],
         ] as const) {
-          const { response, body } = await callServer(fn, [...args], { ip: AWAY_IP });
+          const { response, body } = await callServer(fn, [...args]);
           expect(response.status).toBe(200);
           expectNoTodayData(body);
         }
       }
-      const average = await callServer(recentAverageDemand, [FAR], { ip: AWAY_IP });
+      const average = await callServer(recentAverageDemand, [FAR]);
       expect(average.body).toBe('null');
       // The same call from home does return today, so the checks above can fail.
       const home = await callServer(consumptionBetween, [yesterday, 'z'], {
-        ip: HOME_IP,
+        cookie: await homeCookie(),
       });
       expect(home.body).toContain(String(TODAY_KWH));
     });
 
-    it('stop matching once the address goes stale', async () => {
-      await reportHome(now - HOME_ADDRESS_TTL_MS - 5_000);
-      const { response, body } = await call('/', { ip: HOME_IP });
-      expectNoTodayData(body);
-      expect(response.headers.get('Set-Cookie')).toBeNull();
-    });
-
     it('cannot use the dev override on a production host', async () => {
-      const { response, body } = await call('/?as=home', { ip: AWAY_IP });
+      const { response, body } = await call('/?as=home');
       expectNoTodayData(body);
       expect(response.headers.get('Set-Cookie')).toBeNull();
     });
 
     it('have a forged or revoked cookie cleared', async () => {
-      await reportHome(now - 60_000);
-      const { response: issued } = await call('/', { ip: HOME_IP });
-      const cookie = cookieFrom(issued)!;
-      // Change a character that carries signature bits; the last one partly
-      // encodes base64 padding, which decodes identically.
-      const at = cookie.length - 10;
+      const cookie = await homeCookie();
+      const at = cookie.lastIndexOf('.') + 1;
       const forged = `${cookie.slice(0, at)}${cookie[at] === 'A' ? 'B' : 'A'}${cookie.slice(at + 1)}`;
       for (const [value, overrides] of [
         [forged, {}],
         [cookie, { HOME_COOKIE_SECRET: 'rotated-secret' }],
       ] as const) {
-        const { response, body } = await call(
-          '/',
-          { ip: AWAY_IP, cookie: value },
-          overrides,
-        );
+        const { response, body } = await call('/', { cookie: value }, overrides);
         expectNoTodayData(body);
         expect(response.headers.get('Set-Cookie')).toMatch(
           /^__Host-ldn-home=; Max-Age=0;/,
@@ -224,128 +217,91 @@ describe('home gate', () => {
   });
 
   describe('home visitors', () => {
-    it('see today and get a cookie when the address matches', async () => {
-      await reportHome(now - 60_000);
-      const { response, body } = await call('/', { ip: HOME_IP });
-      expect(body).toContain('spent today');
-      expect(body).toContain(String(TODAY_KWH));
-      expect(body).not.toContain('Usage is shown to the end of yesterday.');
-      expect(response.headers.get('Set-Cookie')).toMatch(
-        /^__Host-ldn-home=v1\.\d+\.[\w-]{43}; Max-Age=2592000; Path=\/; HttpOnly; Secure; SameSite=Lax$/,
-      );
-    });
-
-    it('match inside the reported IPv6 prefix', async () => {
-      await reportHome(now - 60_000, '2001:db8:1200::/56');
-      const inside = await call('/', { ip: '2001:db8:1200:ff::1' });
-      expect(inside.body).toContain('spent today');
-      const outside = await call('/', { ip: '2001:db8:1201::1' });
-      expectNoTodayData(outside.body);
-    });
-
-    it('keep access with the cookie after the address stops matching', async () => {
-      await reportHome(now - 60_000);
-      const { response: issued } = await call('/', { ip: HOME_IP });
-      await env.DB.prepare('DELETE FROM home_address').run();
-      const { response, body } = await call('/', {
-        ip: AWAY_IP,
-        cookie: cookieFrom(issued),
-      });
-      expect(body).toContain('spent today');
-      // Away from home the cookie is honoured but not extended.
-      expect(response.headers.get('Set-Cookie')).toBeNull();
+    it('see today with a home cookie, from any address', async () => {
+      const cookie = await homeCookie();
+      for (const ip of ['198.51.100.7', '2001:db8::1', '203.0.113.200']) {
+        const { response, body } = await call('/', { cookie, ip });
+        expect(body).toContain('spent today');
+        expect(body).toContain(String(TODAY_KWH));
+        expect(body).not.toContain('Usage is shown to the end of yesterday.');
+        expect(response.headers.get('Set-Cookie')).toBeNull();
+      }
     });
 
     it('can read live power', async () => {
-      await reportHome(now - 60_000);
       vi.spyOn(globalThis, 'fetch').mockRejectedValue(new Error('offline'));
       vi.spyOn(console, 'warn').mockImplementation(() => {});
-      const { response, body } = await call('/api/live-power', { ip: HOME_IP });
+      const { response, body } = await call('/api/live-power', {
+        cookie: await homeCookie(),
+      });
       expect(response.status).toBe(200);
       expect(JSON.parse(body).watts).toBe(LIVE_W);
     });
 
     it('can be simulated on local servers', async () => {
       const host = 'http://localhost:5173';
-      const { response, body } = await call('/?as=home', { host, ip: AWAY_IP });
+      const { response, body } = await call('/?as=home', { host });
       expect(body).toContain('spent today');
-      const cookie = cookieFrom(response);
-      const away = await call('/?as=away', { host, cookie });
-      expect(away.body).toContain('spent today');
+      const cookie = cookiesFrom(response);
+      expect((await call('/', { host, cookie })).body).toContain('spent today');
       const outsider = await call('/?as=outsider', { host, cookie });
       expectNoTodayData(outsider.body);
       expect(outsider.response.headers.get('Set-Cookie')).toMatch(/Max-Age=0/);
     });
   });
 
-  describe('POST /api/home/address', () => {
-    const report = (body: unknown, token: string | null = REPORT_TOKEN) =>
-      call('/api/home/address', {
+  describe('enrolment through the Worker', () => {
+    const post = (
+      path: string,
+      init: { cookie?: string; headers?: HeadersInit; body?: string } = {},
+    ) =>
+      call(path, {
         method: 'POST',
-        ip: HOME_IP,
-        headers: {
-          'Content-Type': 'application/json',
-          ...(token === null ? {} : { Authorization: `Bearer ${token}` }),
-        },
-        body: JSON.stringify(body),
+        cookie: init.cookie,
+        body: init.body,
+        headers: { Origin: 'https://ldn.house', ...init.headers },
       });
-    const stored = () => env.DB.prepare('SELECT * FROM home_address').all();
-
-    it('does not exist without a configured token', async () => {
-      const { response } = await call(
-        '/api/home/address',
-        {
-          method: 'POST',
-          headers: { Authorization: 'Bearer ' },
-          body: JSON.stringify({ ipv4: HOME_IP }),
-        },
-        { HOME_REPORT_TOKEN: undefined },
-      );
-      expect(response.status).toBe(404);
-      expect((await stored()).results).toEqual([]);
-    });
-
-    it('rejects missing and wrong tokens', async () => {
-      for (const token of [
-        null,
-        '',
-        'wrong',
-        `${REPORT_TOKEN}x`,
-        REPORT_TOKEN.slice(1),
-      ]) {
-        const { response } = await report({ ipv4: HOME_IP }, token);
-        expect(response.status).toBe(401);
-      }
-      expect((await stored()).results).toEqual([]);
-    });
-
-    it('rejects addresses it cannot match on', async () => {
-      for (const body of [
-        {},
-        { ipv4: 'unavailable' },
-        { ipv4: '192.0.2.300' },
-        { ipv4: HOME_IP, ipv6_prefix: '2001:db8::/32' },
-        { ipv4: HOME_IP, ipv6_prefix: 'unknown' },
-      ]) {
-        expect((await report(body)).response.status).toBe(400);
-      }
-      expect((await stored()).results).toEqual([]);
-    });
-
-    it('stores the address, which then admits the house', async () => {
-      const { response } = await report({
-        ipv4: HOME_IP,
-        ipv6_prefix: '2001:db8:1200::/56',
+    const confirm = (code: string, token = HA_TOKEN) =>
+      post('/api/home/confirm', {
+        headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
+        body: JSON.stringify({ code }),
       });
-      expect(response.status).toBe(204);
-      const [row] = (await stored()).results as { reported_at: number }[];
-      expect(row).toMatchObject({ ipv4: HOME_IP, ipv6_prefix: '2001:db8:1200::/56' });
-      expect(Math.abs(row!.reported_at - Date.now())).toBeLessThan(5_000);
-      expect((await call('/', { ip: HOME_IP })).body).toContain('spent today');
 
-      // A heartbeat without a prefix clears it.
-      expect((await report({ ipv4: HOME_IP })).response.status).toBe(204);
-      expect((await stored()).results).toMatchObject([{ ipv6_prefix: null }]);
+    it('turns an outsider into a home visitor once Home Assistant confirms', async () => {
+      const started = await post('/api/enrol/start');
+      expect(started.response.status).toBe(201);
+      let cookie = cookiesFrom(started.response);
+      const code = new URL(JSON.parse(started.body).confirmUrl).searchParams.get('code')!;
+
+      expect(JSON.parse((await post('/api/enrol/status', { cookie })).body)).toEqual({
+        state: 'pending',
+      });
+      expect((await confirm(code, 'wrong')).response.status).toBe(401);
+      expect((await confirm(code)).response.status).toBe(204);
+
+      const claimed = await post('/api/enrol/status', { cookie });
+      expect(JSON.parse(claimed.body)).toEqual({ state: 'home' });
+      cookie = cookiesFrom(claimed.response, cookie);
+      expect(cookie).toMatch(/^__Host-ldn-home=v1\./);
+      expect((await call('/', { cookie })).body).toContain('spent today');
+      expect((await confirm(code)).response.status).toBe(404);
+    });
+
+    it('enrols by link without JavaScript', async () => {
+      const minted = await post('/api/home/codes', {
+        headers: { Authorization: `Bearer ${HA_TOKEN}` },
+      });
+      const url = new URL(JSON.parse(minted.body).url);
+      const opened = await call(`${url.pathname}${url.search}`);
+      expect(opened.response.status).toBe(200);
+      expect(opened.body).toContain('<form method="post" action="/enrol">');
+      const redeemed = await post('/enrol', {
+        headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+        body: new URLSearchParams({ code: url.searchParams.get('code')! }).toString(),
+      });
+      expect(redeemed.response.status).toBe(303);
+      const cookie = cookiesFrom(redeemed.response);
+      expect((await call('/', { cookie })).body).toContain('spent today');
     });
   });
 });

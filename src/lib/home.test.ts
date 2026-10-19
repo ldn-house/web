@@ -1,146 +1,99 @@
 import { describe, expect, it } from 'vitest';
 import {
   allowsOverride,
-  HOME_ADDRESS_TTL_MS,
+  ENROL_TTL_S,
   HOME_COOKIE_MAX_AGE_S,
-  type HomeAddress,
-  matchesHome,
-  parseIPv4,
-  parseIPv6,
-  parseIPv6Prefix,
+  isSameOrigin,
+  isToken,
+  randomToken,
   readCookie,
+  signEnrolCookie,
   signHomeCookie,
+  verifyEnrolCookie,
   verifyHomeCookie,
 } from './home';
 
 const NOW = Date.parse('2026-10-19T12:00:00Z');
-const home = (overrides: Partial<HomeAddress> = {}): HomeAddress => ({
-  ipv4: '192.0.2.10',
-  ipv6Prefix: null,
-  reportedAt: NOW - 60_000,
-  ...overrides,
-});
+const SECRET = 'synthetic-cookie-secret';
 
-describe('address parsing', () => {
-  it('accepts dotted quads only', () => {
-    expect(parseIPv4('192.0.2.10')).toEqual([192, 0, 2, 10]);
-    for (const bad of [
-      '192.0.2',
-      '192.0.2.256',
-      '192.0.2.010',
-      '192.0.2.x',
-      '',
-      ' 192.0.2.1',
-    ]) {
-      expect(parseIPv4(bad)).toBeNull();
-    }
-  });
-
-  it('expands compressed and IPv4-tailed IPv6', () => {
-    expect(parseIPv6('2001:db8::1')).toEqual([
-      0x20, 0x01, 0x0d, 0xb8, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1,
-    ]);
-    expect(parseIPv6('::ffff:192.0.2.10')?.slice(10)).toEqual([
-      0xff, 0xff, 192, 0, 2, 10,
-    ]);
-    expect(parseIPv6('2001:db8:0:0:0:0:0:1')).toEqual(parseIPv6('2001:db8::1'));
-    for (const bad of [
-      '2001:db8::1::2',
-      '2001:db8:1',
-      '1:2:3:4:5:6:7:8:9',
-      '1:2:3:4:5:6:7::8',
-      '192.0.2.1::',
-      '2001:db8::g',
-      'fe80::1%eth0',
-    ]) {
-      expect(parseIPv6(bad)).toBeNull();
-    }
-  });
-
-  it('refuses prefixes broad enough to cover other households', () => {
-    expect(parseIPv6Prefix('2001:db8:1200::/56')?.bits).toBe(56);
-    expect(parseIPv6Prefix('2001:db8:1200::/48')?.bits).toBe(48);
-    expect(parseIPv6Prefix('2001:db8::/32')).toBeNull();
-    expect(parseIPv6Prefix('::/0')).toBeNull();
-    expect(parseIPv6Prefix('2001:db8::/129')).toBeNull();
-    expect(parseIPv6Prefix('2001:db8::')).toBeNull();
-  });
-});
-
-describe('matchesHome', () => {
-  it('matches the reported IPv4 address exactly', () => {
-    expect(matchesHome('192.0.2.10', home(), NOW)).toBe(true);
-    expect(matchesHome('192.0.2.11', home(), NOW)).toBe(false);
-    expect(matchesHome('198.51.100.10', home(), NOW)).toBe(false);
-    expect(matchesHome('::ffff:192.0.2.10', home(), NOW)).toBe(true);
-  });
-
-  it('matches IPv6 visitors inside the reported prefix only', () => {
-    const v6 = home({ ipv6Prefix: '2001:db8:1200::/56' });
-    expect(matchesHome('2001:db8:1200::1', v6, NOW)).toBe(true);
-    expect(matchesHome('2001:db8:1200:ff:aaaa::1', v6, NOW)).toBe(true);
-    expect(matchesHome('2001:db8:1201::1', v6, NOW)).toBe(false);
-    expect(matchesHome('2001:db8:1300::1', v6, NOW)).toBe(false);
-
-    const odd = home({ ipv6Prefix: '2001:db8:1200:80::/57' });
-    expect(matchesHome('2001:db8:1200:ff::1', odd, NOW)).toBe(true);
-    expect(matchesHome('2001:db8:1200:7f::1', odd, NOW)).toBe(false);
-
-    const slash64 = home({ ipv6Prefix: '2001:db8:1200:5::/64' });
-    expect(matchesHome('2001:db8:1200:5:abcd::9', slash64, NOW)).toBe(true);
-    expect(matchesHome('2001:db8:1200:6::1', slash64, NOW)).toBe(false);
-  });
-
-  it('never matches IPv6 without a reported prefix', () => {
-    expect(matchesHome('2001:db8:1200::1', home(), NOW)).toBe(false);
-    expect(matchesHome('::', home(), NOW)).toBe(false);
-  });
-
-  it('rejects missing or malformed visitor addresses', () => {
-    expect(matchesHome(null, home(), NOW)).toBe(false);
-    expect(matchesHome('', home(), NOW)).toBe(false);
-    expect(matchesHome('not an address', home(), NOW)).toBe(false);
-    expect(matchesHome('192.0.2.10', null, NOW)).toBe(false);
-  });
-
-  it('stops trusting an address once its heartbeat goes quiet', () => {
-    const at = (age: number) => home({ reportedAt: NOW - age });
-    expect(matchesHome('192.0.2.10', at(HOME_ADDRESS_TTL_MS), NOW)).toBe(true);
-    expect(matchesHome('192.0.2.10', at(HOME_ADDRESS_TTL_MS + 1), NOW)).toBe(false);
-    // A report from the future is a clock fault, not a fresh address.
-    expect(matchesHome('192.0.2.10', at(-60_000), NOW)).toBe(false);
-  });
-});
+/** Changes a character that carries signature bits; the last partly encodes padding. */
+const tamper = (value: string) => {
+  const at = value.lastIndexOf('.') + 1;
+  return `${value.slice(0, at)}${value[at] === 'A' ? 'B' : 'A'}${value.slice(at + 1)}`;
+};
 
 describe('home cookie', () => {
-  const SECRET = 'synthetic-cookie-secret';
-
   it('verifies a cookie it signed, until it expires', async () => {
     const cookie = await signHomeCookie(SECRET, NOW);
     expect(cookie).toMatch(/^v1\.\d+\.[A-Za-z0-9_-]{43}$/);
-    expect(await verifyHomeCookie(SECRET, cookie, NOW)).toBe(true);
+    expect((await verifyHomeCookie(SECRET, cookie, NOW)).valid).toBe(true);
     const expiry = NOW + HOME_COOKIE_MAX_AGE_S * 1000;
-    expect(await verifyHomeCookie(SECRET, cookie, expiry - 1000)).toBe(true);
-    expect(await verifyHomeCookie(SECRET, cookie, expiry)).toBe(false);
+    expect((await verifyHomeCookie(SECRET, cookie, expiry - 1000)).valid).toBe(true);
+    expect((await verifyHomeCookie(SECRET, cookie, expiry)).valid).toBe(false);
+  });
+
+  it('asks to be re-signed once a day old', async () => {
+    const cookie = await signHomeCookie(SECRET, NOW);
+    expect(await verifyHomeCookie(SECRET, cookie, NOW + 3_600_000)).toEqual({
+      valid: true,
+      refresh: false,
+    });
+    expect(await verifyHomeCookie(SECRET, cookie, NOW + 86_400_000)).toEqual({
+      valid: true,
+      refresh: true,
+    });
   });
 
   it('rejects tampering and a rotated secret', async () => {
     const cookie = await signHomeCookie(SECRET, NOW);
     const [version, expires, signature] = cookie.split('.') as [string, string, string];
-    // The final character partly encodes padding bits, so change the first.
-    const flipped = `${signature.startsWith('A') ? 'B' : 'A'}${signature.slice(1)}`;
     for (const forged of [
-      `${version}.${expires}.${flipped}`,
+      tamper(cookie),
       `${version}.${Number(expires) + 86_400}.${signature}`,
       `v2.${expires}.${signature}`,
       `${version}.${expires}`,
       '',
       'v1.99999999999.AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA',
     ]) {
-      expect(await verifyHomeCookie(SECRET, forged, NOW)).toBe(false);
+      expect((await verifyHomeCookie(SECRET, forged, NOW)).valid).toBe(false);
     }
-    expect(await verifyHomeCookie('rotated-secret', cookie, NOW)).toBe(false);
-    expect(await verifyHomeCookie(SECRET, undefined, NOW)).toBe(false);
+    expect((await verifyHomeCookie('rotated-secret', cookie, NOW)).valid).toBe(false);
+    expect((await verifyHomeCookie(SECRET, undefined, NOW)).valid).toBe(false);
+  });
+});
+
+describe('enrolment cookie', () => {
+  it('carries its nonce for ten minutes', async () => {
+    const nonce = randomToken();
+    const cookie = await signEnrolCookie(SECRET, nonce, NOW);
+    expect(await verifyEnrolCookie(SECRET, cookie, NOW)).toBe(nonce);
+    expect(await verifyEnrolCookie(SECRET, cookie, NOW + ENROL_TTL_S * 1000)).toBeNull();
+    expect(await verifyEnrolCookie(SECRET, tamper(cookie), NOW)).toBeNull();
+    expect(await verifyEnrolCookie('rotated-secret', cookie, NOW)).toBeNull();
+  });
+
+  it('cannot stand in for a home cookie, or the other way round', async () => {
+    const enrol = await signEnrolCookie(SECRET, randomToken(), NOW);
+    const home = await signHomeCookie(SECRET, NOW);
+    expect((await verifyHomeCookie(SECRET, enrol, NOW)).valid).toBe(false);
+    expect(await verifyEnrolCookie(SECRET, home, NOW)).toBeNull();
+    // Same shape, signed for the other purpose.
+    const [, nonce, expires, mac] = enrol.split('.');
+    expect((await verifyHomeCookie(SECRET, `v1.${expires}.${mac}`, NOW)).valid).toBe(
+      false,
+    );
+    expect(nonce).toHaveLength(22);
+  });
+});
+
+describe('helpers', () => {
+  it('makes unguessable, well-formed tokens', () => {
+    const tokens = new Set(Array.from({ length: 100 }, randomToken));
+    expect(tokens.size).toBe(100);
+    expect([...tokens].every(isToken)).toBe(true);
+    expect(isToken('short')).toBe(false);
+    expect(isToken(`${randomToken()}x`)).toBe(false);
+    expect(isToken(42)).toBe(false);
   });
 
   it('reads one cookie out of a header', () => {
@@ -150,10 +103,28 @@ describe('home cookie', () => {
     expect(readCookie('x__Host-ldn-home=1', '__Host-ldn-home')).toBeUndefined();
     expect(readCookie(null, '__Host-ldn-home')).toBeUndefined();
   });
-});
 
-describe('allowsOverride', () => {
-  it('only allows local servers and PR previews', () => {
+  it('only treats this origin as same-origin', () => {
+    const request = (headers: Record<string, string>) =>
+      new Request('https://ldn.house/api/enrol/start', { method: 'POST', headers });
+    expect(isSameOrigin(request({ Origin: 'https://ldn.house' }))).toBe(true);
+    expect(
+      isSameOrigin(
+        request({ Origin: 'https://ldn.house', 'Sec-Fetch-Site': 'same-origin' }),
+      ),
+    ).toBe(true);
+    expect(isSameOrigin(request({}))).toBe(false);
+    expect(isSameOrigin(request({ Origin: 'null' }))).toBe(false);
+    expect(isSameOrigin(request({ Origin: 'https://attacker.test' }))).toBe(false);
+    expect(isSameOrigin(request({ Origin: 'http://ldn.house' }))).toBe(false);
+    expect(
+      isSameOrigin(
+        request({ Origin: 'https://ldn.house', 'Sec-Fetch-Site': 'cross-site' }),
+      ),
+    ).toBe(false);
+  });
+
+  it('only allows the override on local servers and PR previews', () => {
     const allowed = (url: string) => allowsOverride(new URL(url));
     expect(allowed('http://localhost:5173/')).toBe(true);
     expect(allowed('http://127.0.0.1:4173/')).toBe(true);

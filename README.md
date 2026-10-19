@@ -66,31 +66,39 @@ Workers Scripts edit, D1 edit and Workers Routes edit.
 
 ## Home access
 
-Live and same-day usage is shown only to visitors at home: from the house's
-public address, or with the cookie a visit from there sets. Everyone else sees
-usage to the end of yesterday.
+Live and same-day usage is shown only to enrolled devices, which carry a signed
+cookie valid for 30 days after last use. Everyone else sees usage to the end of
+yesterday.
 
 Worker secrets:
 
 ```bash
-bunx wrangler secret put HOME_REPORT_TOKEN  # Home Assistant's bearer token
-bunx wrangler secret put HOME_COOKIE_SECRET # signs home cookies; rotate to revoke them
+bunx wrangler secret put HOME_ASSISTANT_TOKEN       # Home Assistant's bearer token
+bunx wrangler secret put HOME_COOKIE_SECRET         # signs cookies; rotate to revoke them
+bunx wrangler secret put HOME_ASSISTANT_WEBHOOK_URL # http://<HA LAN address>:8123/api/webhook/<id>
 ```
 
-Home Assistant reports the address on change and every five minutes; an address
-unreported for 15 minutes stops counting:
+A device enrols from home by asking for a code, which the page sends to the
+local-only Home Assistant webhook. Home Assistant then confirms it:
 
 ```http
-POST /api/home/address
-Authorization: Bearer <HOME_REPORT_TOKEN>
+POST /api/home/confirm
+Authorization: Bearer <HOME_ASSISTANT_TOKEN>
 Content-Type: application/json
 
-{"ipv4": "192.0.2.10", "ipv6_prefix": "2001:db8:1200::/56"}
+{"code": "<code from the webhook's ?code=>"}
 ```
 
-`ipv6_prefix` is optional, /48 to /128. Locally and on PR previews, `?as=home`,
-`?as=away` and `?as=outsider` simulate the house, a cookie-holder away from it,
-and a stranger.
+Away from home, Home Assistant mints a one-time link, `{"url": …, "expiresAt": …}`,
+to send to the device:
+
+```http
+POST /api/home/codes
+Authorization: Bearer <HOME_ASSISTANT_TOKEN>
+```
+
+Codes are single-use and expire after ten minutes. Locally and on PR previews,
+`?as=home` and `?as=outsider` set and clear the cookie.
 
 ## Maintenance
 

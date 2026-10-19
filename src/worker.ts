@@ -1,6 +1,13 @@
 import { handleRequest } from 'virtual:solid-ssr-handler';
 import { Hono } from 'hono';
-import { reportHomeAddress, resolveVisitor } from './lib/home-gate';
+import {
+  browserEnrolmentStatus,
+  confirmBrowserEnrolment,
+  enrolmentLinkPage,
+  mintEnrolmentLink,
+  resolveVisitor,
+  startBrowserEnrolment,
+} from './lib/home-gate';
 import { BACKFILL_FLOOR, ingest } from './lib/ingest';
 import { livePowerResponse } from './lib/live-power';
 import { type OctopusFixture, replayFetcher } from './lib/replay';
@@ -17,7 +24,10 @@ api.get('/live-power', async (c) =>
     : c.json({ error: 'home only' }, 403, { 'Cache-Control': 'no-store' }),
 );
 
-api.post('/home/address', (c) => reportHomeAddress(c.req.raw, c.env));
+api.post('/enrol/start', (c) => startBrowserEnrolment(c.req.raw, c.env));
+api.post('/enrol/status', (c) => browserEnrolmentStatus(c.req.raw, c.env));
+api.post('/home/confirm', (c) => confirmBrowserEnrolment(c.req.raw, c.env));
+api.post('/home/codes', (c) => mintEnrolmentLink(c.req.raw, c.env));
 
 /** Absent in production: without SEED_TOKEN the route does not exist. */
 api.post('/seed', async (c) => {
@@ -35,14 +45,22 @@ api.post('/seed', async (c) => {
   return c.json(summary);
 });
 
-/** Routes that never vary by visitor skip the address lookup. */
-const UNGATED = new Set(['/api/health', '/api/seed', '/api/home/address']);
+/** Routes that never read the visitor; enrolment sets its own cookies. */
+const UNGATED = new Set([
+  '/api/health',
+  '/api/seed',
+  '/api/enrol/start',
+  '/api/enrol/status',
+  '/api/home/confirm',
+  '/api/home/codes',
+]);
 
 export default {
   async fetch(request, env, ctx) {
     const { pathname } = new URL(request.url);
     const isApi = pathname === '/api' || pathname.startsWith('/api/');
     if (UNGATED.has(pathname)) return api.fetch(request, env, ctx);
+    if (pathname === '/enrol') return enrolmentLinkPage(request, env);
 
     const visitor = await resolveVisitor(request, env);
     const upstream = await withVisitor({ home: visitor.home }, () =>

@@ -26,7 +26,10 @@ export default defineConfig({
     projects: [
       {
         extends: true,
-        test: { name: 'unit', exclude: ['**/node_modules/**', 'src/**/*.ssr.test.ts'] },
+        test: {
+          name: 'unit',
+          exclude: ['**/node_modules/**', '.scratch/**', 'src/**/*.ssr.test.ts'],
+        },
       },
       {
         // Renders the real Worker entry, so tests can assert on the HTML it

@@ -1,5 +1,6 @@
 import type { JSX } from '@solidjs/web';
 import { createEffect, createMemo, createSignal, For, onSettled, Show } from 'solid-js';
+import { EnrolDevice } from './components/EnrolDevice';
 import { RateChart } from './components/RateChart';
 import type { Window as ChartWindow } from './components/TimeAxis';
 import { UsageChart } from './components/UsageChart';
@@ -398,7 +399,7 @@ export default function App() {
           </Show>
           <Show when={!home()}>
             <p class="mt-3 text-xs text-neutral-500">
-              Usage is shown to the end of yesterday.
+              Usage is shown to the end of yesterday. <EnrolDevice />
             </p>
           </Show>
         </div>

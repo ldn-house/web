@@ -1,100 +1,11 @@
-/** Home Assistant heartbeats every ~5 minutes; a quieter address may have been reassigned. */
-export const HOME_ADDRESS_TTL_MS = 15 * 60_000;
 export const HOME_COOKIE = '__Host-ldn-home';
 export const HOME_COOKIE_MAX_AGE_S = 30 * 86_400;
-/** Narrower than any household delegation, so a typo cannot admit a whole ISP. */
-const MIN_IPV6_PREFIX = 48;
+/** A cookie is re-signed on use once it is a day old, so it lapses after 30 idle days. */
+const HOME_COOKIE_REFRESH_S = 86_400;
+export const ENROL_COOKIE = '__Host-ldn-enrol';
+export const ENROL_TTL_S = 10 * 60;
 
-export interface HomeAddress {
-  ipv4: string;
-  ipv6Prefix: string | null;
-  reportedAt: number;
-}
-
-export function parseIPv4(value: string): number[] | null {
-  const parts = value.split('.');
-  if (parts.length !== 4) return null;
-  const bytes = parts.map((part) =>
-    /^(0|[1-9]\d{0,2})$/.test(part) ? Number(part) : NaN,
-  );
-  return bytes.every((byte) => byte <= 255) ? bytes : null;
-}
-
-/** Sixteen bytes, or null. Accepts `::` compression and an embedded IPv4 tail. */
-export function parseIPv6(value: string): number[] | null {
-  if (!/^[0-9a-f:.]+$/i.test(value) || value.split('::').length > 2) return null;
-  const groups = (side: string) => (side === '' ? [] : side.split(':'));
-  const [head, tail] = value.includes('::')
-    ? [groups(value.split('::')[0]!), groups(value.split('::')[1]!)]
-    : [groups(value), null];
-  // Only the final group of the whole address may be an IPv4 tail.
-  const words = (list: string[], last: boolean) => {
-    const out: number[] = [];
-    for (const [i, group] of list.entries()) {
-      if (group.includes('.')) {
-        const v4 = last && i === list.length - 1 ? parseIPv4(group) : null;
-        if (!v4) return null;
-        out.push((v4[0]! << 8) | v4[1]!, (v4[2]! << 8) | v4[3]!);
-      } else if (/^[0-9a-f]{1,4}$/i.test(group)) {
-        out.push(Number.parseInt(group, 16));
-      } else {
-        return null;
-      }
-    }
-    return out;
-  };
-  const left = words(head, tail === null);
-  const right = tail === null ? [] : words(tail, true);
-  if (!left || !right) return null;
-  if (tail === null && left.length !== 8) return null;
-  if (tail !== null && left.length + right.length > 7) return null;
-  const all = [...left, ...Array(8 - left.length - right.length).fill(0), ...right];
-  return all.flatMap((word) => [word >> 8, word & 0xff]);
-}
-
-/** `2001:db8:1234:5600::/56` style; the bits past the length are ignored. */
-export function parseIPv6Prefix(value: string): { bytes: number[]; bits: number } | null {
-  const match = /^([^/]+)\/(\d{1,3})$/.exec(value);
-  if (!match) return null;
-  const bits = Number(match[2]);
-  const bytes = parseIPv6(match[1]!);
-  return bytes && bits >= MIN_IPV6_PREFIX && bits <= 128 ? { bytes, bits } : null;
-}
-
-function prefixMatches(address: number[], prefix: number[], bits: number): boolean {
-  for (let bit = 0; bit < bits; bit += 8) {
-    const mask = bits - bit >= 8 ? 0xff : (0xff << (8 - (bits - bit))) & 0xff;
-    if ((address[bit / 8]! & mask) !== (prefix[bit / 8]! & mask)) return false;
-  }
-  return true;
-}
-
-export function isFresh(address: HomeAddress, now: number): boolean {
-  const age = now - address.reportedAt;
-  return age >= 0 && age <= HOME_ADDRESS_TTL_MS;
-}
-
-/** Whether a `CF-Connecting-IP` belongs to the house; false once the report is stale. */
-export function matchesHome(
-  ip: string | null,
-  address: HomeAddress | null,
-  now: number,
-): boolean {
-  if (!ip || !address || !isFresh(address, now)) return false;
-  const home4 = parseIPv4(address.ipv4);
-  const v4 = parseIPv4(ip);
-  if (v4) return !!home4 && v4.every((byte, i) => byte === home4[i]);
-  const v6 = parseIPv6(ip);
-  if (!v6) return false;
-  // An IPv4-mapped address is the IPv4 visitor in disguise.
-  if (v6.slice(0, 10).every((byte) => byte === 0) && v6[10] === 0xff && v6[11] === 0xff) {
-    return !!home4 && v6.slice(12).every((byte, i) => byte === home4[i]);
-  }
-  const prefix = address.ipv6Prefix ? parseIPv6Prefix(address.ipv6Prefix) : null;
-  return !!prefix && prefixMatches(v6, prefix.bytes, prefix.bits);
-}
-
-function base64url(bytes: ArrayBuffer): string {
+function base64url(bytes: ArrayBuffer | Uint8Array): string {
   return btoa(String.fromCharCode(...new Uint8Array(bytes)))
     .replace(/\+/g, '-')
     .replace(/\//g, '_')
@@ -111,6 +22,20 @@ function fromBase64url(value: string): Uint8Array<ArrayBuffer> | null {
   }
 }
 
+/** 128 random bits, URL-safe. */
+export function randomToken(): string {
+  return base64url(crypto.getRandomValues(new Uint8Array(16)));
+}
+
+export const isToken = (value: unknown): value is string =>
+  typeof value === 'string' && /^[A-Za-z0-9_-]{22}$/.test(value);
+
+export async function sha256(value: string): Promise<string> {
+  return base64url(
+    await crypto.subtle.digest('SHA-256', new TextEncoder().encode(value)),
+  );
+}
+
 function hmacKey(secret: string): Promise<CryptoKey> {
   return crypto.subtle.importKey(
     'raw',
@@ -121,36 +46,90 @@ function hmacKey(secret: string): Promise<CryptoKey> {
   );
 }
 
-const cookiePayload = (expires: number) => new TextEncoder().encode(`home.v1.${expires}`);
-
-/** `v1.<expiry in epoch seconds>.<HMAC-SHA256>`; rotating the secret revokes them all. */
-export async function signHomeCookie(secret: string, now: number): Promise<string> {
-  const expires = Math.floor(now / 1000) + HOME_COOKIE_MAX_AGE_S;
-  const signature = await crypto.subtle.sign(
+/** Keyed, so stored client hashes cannot be reversed by enumerating addresses. */
+export async function clientHash(secret: string, ip: string | null): Promise<string> {
+  const mac = await crypto.subtle.sign(
     'HMAC',
     await hmacKey(secret),
-    cookiePayload(expires),
+    new TextEncoder().encode(`client.${ip ?? ''}`),
   );
-  return `v1.${expires}.${base64url(signature)}`;
+  return base64url(mac);
 }
 
+/** Purpose-separated `v1.<fields…>.<expiry s>.<HMAC-SHA256>`. */
+async function signToken(
+  secret: string,
+  purpose: string,
+  fields: string[],
+  expires: number,
+): Promise<string> {
+  const body = ['v1', ...fields, String(expires)].join('.');
+  const mac = await crypto.subtle.sign(
+    'HMAC',
+    await hmacKey(secret),
+    new TextEncoder().encode(`${purpose}.${body}`),
+  );
+  return `${body}.${base64url(mac)}`;
+}
+
+/** The signed fields and expiry, or null if forged, malformed or expired. */
+async function verifyToken(
+  secret: string,
+  purpose: string,
+  fieldCount: number,
+  value: string | undefined,
+  now: number,
+): Promise<{ fields: string[]; expires: number } | null> {
+  const parts = value?.split('.') ?? [];
+  if (parts.length !== fieldCount + 3 || parts[0] !== 'v1') return null;
+  const expiresText = parts.at(-2)!;
+  const mac = parts.at(-1)!;
+  if (!/^\d{1,12}$/.test(expiresText) || !/^[A-Za-z0-9_-]{43}$/.test(mac)) return null;
+  const fields = parts.slice(1, -2);
+  if (!fields.every((field) => /^[A-Za-z0-9_-]+$/.test(field))) return null;
+  const expires = Number(expiresText);
+  if (expires * 1000 <= now) return null;
+  const signature = fromBase64url(mac);
+  if (!signature) return null;
+  const body = parts.slice(0, -1).join('.');
+  const valid = await crypto.subtle.verify(
+    'HMAC',
+    await hmacKey(secret),
+    signature,
+    new TextEncoder().encode(`${purpose}.${body}`),
+  );
+  return valid ? { fields, expires } : null;
+}
+
+/** `v1.<expiry in epoch seconds>.<HMAC>`; rotating the secret revokes them all. */
+export function signHomeCookie(secret: string, now: number): Promise<string> {
+  return signToken(secret, 'home', [], Math.floor(now / 1000) + HOME_COOKIE_MAX_AGE_S);
+}
+
+/** Whether the cookie admits its holder, and whether it is due to be re-signed. */
 export async function verifyHomeCookie(
   secret: string,
   value: string | undefined,
   now: number,
-): Promise<boolean> {
-  const match = value ? /^v1\.(\d{1,12})\.([A-Za-z0-9_-]{43})$/.exec(value) : null;
-  if (!match) return false;
-  const expires = Number(match[1]);
-  if (expires * 1000 <= now) return false;
-  const signature = fromBase64url(match[2]!);
-  if (!signature) return false;
-  return crypto.subtle.verify(
-    'HMAC',
-    await hmacKey(secret),
-    signature,
-    cookiePayload(expires),
-  );
+): Promise<{ valid: boolean; refresh: boolean }> {
+  const token = await verifyToken(secret, 'home', 0, value, now);
+  if (!token) return { valid: false, refresh: false };
+  const issued = token.expires - HOME_COOKIE_MAX_AGE_S;
+  return { valid: true, refresh: now / 1000 - issued >= HOME_COOKIE_REFRESH_S };
+}
+
+/** Binds a pending enrolment to this browser: `v1.<nonce>.<expiry>.<HMAC>`. */
+export function signEnrolCookie(secret: string, nonce: string, now: number) {
+  return signToken(secret, 'enrol', [nonce], Math.floor(now / 1000) + ENROL_TTL_S);
+}
+
+export async function verifyEnrolCookie(
+  secret: string,
+  value: string | undefined,
+  now: number,
+): Promise<string | null> {
+  const token = await verifyToken(secret, 'enrol', 1, value, now);
+  return token && isToken(token.fields[0]) ? token.fields[0] : null;
 }
 
 export function readCookie(header: string | null, name: string): string | undefined {
@@ -161,15 +140,28 @@ export function readCookie(header: string | null, name: string): string | undefi
   return undefined;
 }
 
-export function homeCookieHeader(value: string): string {
-  return `${HOME_COOKIE}=${value}; Max-Age=${HOME_COOKIE_MAX_AGE_S}; Path=/; HttpOnly; Secure; SameSite=Lax`;
-}
+const cookieHeader = (name: string, value: string, maxAge: number) =>
+  `${name}=${value}; Max-Age=${maxAge}; Path=/; HttpOnly; Secure; SameSite=Lax`;
 
-export const CLEAR_HOME_COOKIE = `${HOME_COOKIE}=; Max-Age=0; Path=/; HttpOnly; Secure; SameSite=Lax`;
+export const homeCookieHeader = (value: string) =>
+  cookieHeader(HOME_COOKIE, value, HOME_COOKIE_MAX_AGE_S);
+export const CLEAR_HOME_COOKIE = cookieHeader(HOME_COOKIE, '', 0);
+export const enrolCookieHeader = (value: string) =>
+  cookieHeader(ENROL_COOKIE, value, ENROL_TTL_S);
+export const CLEAR_ENROL_COOKIE = cookieHeader(ENROL_COOKIE, '', 0);
+
+/** Cookie-authenticated writes must come from this site's own pages. */
+export function isSameOrigin(request: Request): boolean {
+  const origin = request.headers.get('Origin');
+  const site = request.headers.get('Sec-Fetch-Site');
+  return (
+    origin === new URL(request.url).origin && (site === null || site === 'same-origin')
+  );
+}
 
 /**
  * Local servers and PR previews (`ldn-house-pr-N`, see scripts/preview) may
- * simulate the house with `?as=`. The production Worker never answers on these
+ * simulate visitors with `?as=`. The production Worker never answers on these
  * hostnames, so the override cannot apply there.
  */
 export function allowsOverride(url: URL): boolean {
