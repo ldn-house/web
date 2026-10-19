@@ -29,6 +29,26 @@ hour. Local servers and other integrations using the same Octopus account share
 its upstream quota. A throttle uses Octopus's reset time or `Retry-After`, falling
 back to one hour when neither is available.
 
+Scheduled ingestion runs at minutes 7 and 37. Its existing GraphQL
+`smartMeterTelemetry(grouping: HALF_HOURLY)` request confirms a period only when
+there is a valid consumption bucket at or beyond its end and the end is at least
+two minutes old. A bucket timestamp is its start, so the final bucket cannot
+prove its own completion. During an outage that bucket stays unconfirmed; an
+open page keeps its last live partial reading, while a fresh page may omit it
+until later telemetry or billing arrives. Missing or invalid deltas never erase
+previously stored period consumption; valid corrections, including zero, replace it.
+
+This uses the existing response, with no extra Octopus queries, retries or polling.
+Each scheduled run still makes one half-hour telemetry query per discovered device,
+independent of visitor count. Recovery still starts 24 hours behind the latest
+stored completed period, capped at three days; withholding the last unconfirmed
+bucket can keep that watermark earlier and return more history within that cap.
+Telemetry failures (including throttling) still skip the secondary feed and leave
+billing ingestion intact until the next scheduled run. This completion check adds
+no rate-limit calls; it trades confirmation of the latest bucket for avoiding a
+false completed reading. Grouped data does not establish uninterrupted coverage
+inside older periods, and cannot repair historical gaps by itself.
+
 A GitHub Actions workflow owns deploys. Workers Builds is disconnected.
 
 | Trigger | Effect |

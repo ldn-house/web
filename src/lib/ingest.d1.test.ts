@@ -1,7 +1,9 @@
 import { env } from 'cloudflare:test';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { isPartialSlot, mergeConsumption } from './consumption';
 import { ingest } from './ingest';
 import type { Fetcher } from './octopus';
+import { telemetryBetween } from './queries';
 
 // Synthetic throughout — never a real MPAN, serial or account number.
 const MPAN = '1234567890123';
@@ -285,11 +287,17 @@ describe('ingest against D1', () => {
         consumption: '1250',
         consumptionDelta: '375',
       },
+      {
+        readAt: '2026-01-06T01:00:00Z',
+        demand: '500',
+        consumption: '1625',
+        consumptionDelta: '0',
+      },
     ];
     const summary = await ingest(env, { fetchImpl: fakeOctopus(api).fetchImpl });
-    expect(summary.telemetryRows).toBe(2);
+    expect(summary.telemetryRows).toBe(3);
     const row = await env.DB.prepare(
-      'SELECT read_at, demand_w, register_wh, consumption_wh FROM telemetry ORDER BY read_at DESC LIMIT 1',
+      'SELECT read_at, demand_w, register_wh, consumption_wh FROM telemetry WHERE consumption_wh IS NOT NULL ORDER BY read_at DESC LIMIT 1',
     ).first();
     expect(row).toEqual({
       read_at: '2026-01-06T00:30:00Z',
@@ -326,15 +334,138 @@ describe('ingest against D1', () => {
       ]);
       vi.setSystemTime(new Date('2026-01-06T01:37:00Z'));
       api.telemetry[1]!.consumptionDelta = '300';
+      api.telemetry.push({
+        readAt: '2026-01-06T01:30:00Z',
+        demand: '500',
+        consumption: '1600',
+        consumptionDelta: '50',
+      });
       await ingest(env, { fetchImpl: fakeOctopus(api).fetchImpl });
       expect((await periods()).results).toEqual([
         { consumption_wh: 250 },
         { consumption_wh: 300 },
+        { consumption_wh: null },
       ]);
     } finally {
       vi.useRealTimers();
     }
   });
+
+  it('does not complete the last measured period when an outage outlasts it', async () => {
+    vi.useFakeTimers({ toFake: ['Date'] });
+    try {
+      api.telemetry = [
+        {
+          readAt: '2026-01-06T12:00:00Z',
+          demand: '500',
+          consumption: '1000',
+          consumptionDelta: '50',
+        },
+      ];
+      const value = () => env.DB.prepare('SELECT consumption_wh FROM telemetry').first();
+      vi.setSystemTime(new Date('2026-01-06T12:07:00Z'));
+      await ingest(env, { fetchImpl: fakeOctopus(api).fetchImpl });
+      expect(await value()).toEqual({ consumption_wh: null });
+      vi.setSystemTime(new Date('2026-01-06T12:37:00Z'));
+      await ingest(env, { fetchImpl: fakeOctopus(api).fetchImpl });
+      expect(await value()).toEqual({ consumption_wh: null });
+      const from = '2026-01-06T12:00:00Z';
+      const to = '2026-01-06T13:00:00Z';
+      const stored = await telemetryBetween(from, to);
+      expect(stored).toEqual([]);
+      const usage = mergeConsumption(
+        [],
+        stored,
+        [{ start: from, kwh: 0.05, through: '2026-01-06T12:07:00Z' }],
+        from,
+        to,
+      );
+      expect(usage).toHaveLength(1);
+      expect(isPartialSlot(usage[0]!)).toBe(true);
+      expect(usage[0]!.through).toBe('2026-01-06T12:07:00Z');
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('requires valid measurement evidence and keeps the two-minute landing delay', async () => {
+    vi.useFakeTimers({ toFake: ['Date'] });
+    try {
+      api.telemetry = [
+        {
+          readAt: '2026-01-06T12:00:00Z',
+          demand: '500',
+          consumption: '1000',
+          consumptionDelta: '300',
+        },
+        {
+          readAt: '2026-01-06T12:30:00Z',
+          demand: '500',
+          consumption: '1300',
+          consumptionDelta: null,
+        },
+      ];
+      const value = () =>
+        env.DB.prepare(
+          "SELECT consumption_wh FROM telemetry WHERE read_at = '2026-01-06T12:00:00Z'",
+        ).first();
+      vi.setSystemTime(new Date('2026-01-06T12:37:00Z'));
+      await ingest(env, { fetchImpl: fakeOctopus(api).fetchImpl });
+      expect(await value()).toEqual({ consumption_wh: null });
+      api.telemetry[1]!.consumptionDelta = '0';
+      vi.setSystemTime(new Date('2026-01-06T12:31:59Z'));
+      await ingest(env, { fetchImpl: fakeOctopus(api).fetchImpl });
+      expect(await value()).toEqual({ consumption_wh: null });
+      vi.setSystemTime(new Date('2026-01-06T12:32:00Z'));
+      await ingest(env, { fetchImpl: fakeOctopus(api).fetchImpl });
+      expect(await value()).toEqual({ consumption_wh: 300 });
+      // Losing confirmation in a shorter response must not erase stored data.
+      api.telemetry.pop();
+      await ingest(env, { fetchImpl: fakeOctopus(api).fetchImpl });
+      expect(await value()).toEqual({ consumption_wh: 300 });
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it.each([null, undefined, '', '  ', 'invalid', 'NaN', 'Infinity', '-1'])(
+    'retains stored consumption when a later delta is %s',
+    async (missing) => {
+      vi.useFakeTimers({ toFake: ['Date'] });
+      try {
+        vi.setSystemTime(new Date('2026-01-06T12:37:00Z'));
+        api.telemetry = [
+          {
+            readAt: '2026-01-06T12:00:00Z',
+            demand: '500',
+            consumption: '1000',
+            consumptionDelta: '300',
+          },
+          {
+            readAt: '2026-01-06T12:30:00Z',
+            demand: '500',
+            consumption: '1300',
+            consumptionDelta: '50',
+          },
+        ];
+        const value = () =>
+          env.DB.prepare(
+            "SELECT consumption_wh FROM telemetry WHERE read_at = '2026-01-06T12:00:00Z'",
+          ).first();
+        await ingest(env, { fetchImpl: fakeOctopus(api).fetchImpl });
+        expect(await value()).toEqual({ consumption_wh: 300 });
+        api.telemetry[0]!.consumptionDelta = missing;
+        await ingest(env, { fetchImpl: fakeOctopus(api).fetchImpl });
+        expect(await value()).toEqual({ consumption_wh: 300 });
+        // A valid correction, including zero, must still replace the old value.
+        api.telemetry[0]!.consumptionDelta = '0';
+        await ingest(env, { fetchImpl: fakeOctopus(api).fetchImpl });
+        expect(await value()).toEqual({ consumption_wh: 0 });
+      } finally {
+        vi.useRealTimers();
+      }
+    },
+  );
 
   it('backfills legacy telemetry and bounds recovery after a long outage to three days', async () => {
     vi.useFakeTimers({ toFake: ['Date'] });

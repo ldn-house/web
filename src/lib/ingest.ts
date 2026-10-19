@@ -68,6 +68,7 @@ async function upsertAll<T extends Record<string, unknown>>(
   rows: readonly T[],
   conflictTarget: unknown[],
   mutableKeys: readonly string[],
+  preserveOnNull: readonly string[] = [],
 ): Promise<number> {
   if (rows.length === 0) return 0;
   const columnCount = Object.keys(rows[0]!).length;
@@ -78,7 +79,13 @@ async function upsertAll<T extends Record<string, unknown>>(
     mutableKeys.map((key) => {
       const column = (table as unknown as Record<string, { name: string }>)[key];
       if (!column) throw new TypeError(`Unknown column ${key}`);
-      return [key, sql.raw(`excluded.${column.name}`)];
+      const incoming = sql.raw(`excluded.${column.name}`);
+      return [
+        key,
+        preserveOnNull.includes(key)
+          ? sql`coalesce(${incoming}, ${sql.identifier(column.name)})`
+          : incoming,
+      ];
     }),
   );
 
@@ -269,12 +276,21 @@ export async function ingest(
         ).toISOString(),
       );
       const readings = await fetchTelemetry(key, deviceId, start, readThrough, fetchImpl);
-      // Allow the last ten-second reading to land before storing a period as complete.
+      // HALF_HOURLY readAt is a bucket start, not a measurement end. The last
+      // valid bucket is still unconfirmed even if the clock has moved on: an
+      // outage can leave its delta frozen. Require a subsequent valid bucket
+      // as evidence that the feed reached the period end, plus the landing delay.
+      const slots = meterSlots(readings, readThrough);
+      const measuredThrough = slots.reduce(
+        (latest, slot) => Math.max(latest, Date.parse(slot.start)),
+        Number.NEGATIVE_INFINITY,
+      );
       const completed = new Map(
-        meterSlots(readings, readThrough)
+        slots
           .filter(
             (slot) =>
-              Date.parse(slot.start) + HALF_HOUR_MS <= Date.parse(readThrough) - 120_000,
+              Date.parse(slot.start) + HALF_HOUR_MS <=
+              Math.min(measuredThrough, Date.parse(readThrough) - 120_000),
           )
           .map((slot) => [Date.parse(slot.start), slot.kwh * 1000]),
       );
@@ -289,6 +305,7 @@ export async function ingest(
         })),
         [schema.telemetry.readAt],
         ['demandW', 'registerWh', 'consumptionWh'],
+        ['consumptionWh'],
       );
     }
   } catch (error) {
