@@ -1,4 +1,4 @@
-import { createMemo, createSignal, For, Show, untrack } from 'solid-js';
+import { createMemo, createSignal, For, onCleanup, Show, untrack } from 'solid-js';
 import { linearScale, niceCeiling, stepPath, ticks } from '../lib/chart';
 import { londonDay, londonTimeRange } from '../lib/format';
 import type { RateSlot } from '../lib/queries';
@@ -13,11 +13,18 @@ export function RateChart(props: {
   cap: number | null;
   window: Window;
 }) {
-  const [hovered, setHovered] = createSignal<RateSlot>();
-  const [focused, setFocused] = createSignal<RateSlot>();
-  const [keyboardIndex, setKeyboardIndex] = createSignal(0);
-  const active = createMemo(() => hovered() ?? focused());
-  const targets: SVGRectElement[] = [];
+  // Refreshes replace rate objects; selection and DOM identity belong to a period.
+  const [hoveredStart, setHoveredStart] = createSignal<string>();
+  const [focusedStart, setFocusedStart] = createSignal<string>();
+  const [keyboardStart, setKeyboardStart] = createSignal<string>();
+  const targets = new Map<string, SVGRectElement>();
+  const rateAt = (start: string | undefined) =>
+    start === undefined ? undefined : props.rates.find((rate) => rate.start === start);
+  const active = createMemo(() => rateAt(hoveredStart()) ?? rateAt(focusedStart()));
+  const tabStop = createMemo(() => {
+    const wanted = keyboardStart();
+    return rateAt(wanted)?.start ?? props.rates[0]?.start;
+  });
   const prices = createMemo(() => props.rates.map((r) => r.pIncVat));
   const top = createMemo(() => niceCeiling(Math.max(...prices(), props.cap ?? 0, 1)));
   const bottom = createMemo(() => Math.min(...prices(), 0));
@@ -33,7 +40,9 @@ export function RateChart(props: {
   );
   const slotWidth = createMemo(() => x()(SLOT_MS) - x()(0));
   const anchorX = (rate: RateSlot) => x()(Date.parse(rate.start)) + slotWidth() / 2;
-  const moveFocus = (event: KeyboardEvent, index: number) => {
+  const moveFocus = (event: KeyboardEvent, start: string) => {
+    const index = props.rates.findIndex((rate) => rate.start === start);
+    if (index < 0) return;
     let next: number | undefined;
     if (event.key === 'ArrowRight' || event.key === 'ArrowDown')
       next = Math.min(index + 1, props.rates.length - 1);
@@ -43,8 +52,10 @@ export function RateChart(props: {
     if (event.key === 'End') next = props.rates.length - 1;
     if (next === undefined || next === index) return;
     event.preventDefault();
-    setKeyboardIndex(next);
-    targets[next]?.focus();
+    const target = props.rates[next];
+    if (!target) return;
+    setKeyboardStart(target.start);
+    targets.get(target.start)?.focus();
   };
 
   const line = createMemo(() => {
@@ -65,7 +76,7 @@ export function RateChart(props: {
         class="w-full"
         role="group"
         aria-label="Agile unit rates against the capped standard tariff. Use arrow keys to inspect each rate."
-        onPointerLeave={() => setHovered()}
+        onPointerLeave={() => setHoveredStart()}
       >
         <For each={ticks(top(), 5)}>
           {(value) => (
@@ -116,29 +127,33 @@ export function RateChart(props: {
           )}
         </Show>
 
-        <For each={props.rates}>
-          {(rate, index) => (
-            <rect
-              ref={(element) => {
-                targets[untrack(index)] = element;
-              }}
-              x={x()(Date.parse(rate.start))}
-              y={PAD.top}
-              width={slotWidth()}
-              height={HEIGHT - PAD.bottom - PAD.top}
-              fill="transparent"
-              tabindex={keyboardIndex() === index() ? 0 : -1}
-              role="img"
-              aria-label={`${londonDay(rate.start)} ${londonTimeRange(rate.start)}, ${rate.pIncVat.toFixed(2)} pence per kilowatt hour`}
-              onPointerEnter={() => setHovered(rate)}
-              onFocus={() => {
-                setKeyboardIndex(index());
-                setFocused(rate);
-              }}
-              onBlur={() => setFocused()}
-              onKeyDown={(event) => moveFocus(event, index())}
-            />
-          )}
+        <For each={props.rates} keyed={(rate) => rate.start}>
+          {(rate) => {
+            const start = untrack(() => rate().start);
+            onCleanup(() => targets.delete(start));
+            return (
+              <rect
+                ref={(element) => {
+                  targets.set(start, element);
+                }}
+                x={x()(Date.parse(rate().start))}
+                y={PAD.top}
+                width={slotWidth()}
+                height={HEIGHT - PAD.bottom - PAD.top}
+                fill="transparent"
+                tabindex={tabStop() === start ? 0 : -1}
+                role="img"
+                aria-label={`${londonDay(rate().start)} ${londonTimeRange(rate().start)}, ${rate().pIncVat.toFixed(2)} pence per kilowatt hour`}
+                onPointerEnter={() => setHoveredStart(start)}
+                onFocus={() => {
+                  setKeyboardStart(start);
+                  setFocusedStart(start);
+                }}
+                onBlur={() => setFocusedStart()}
+                onKeyDown={(event) => moveFocus(event, start)}
+              />
+            );
+          }}
         </For>
 
         <Show when={active()}>
