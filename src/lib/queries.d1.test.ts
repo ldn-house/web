@@ -292,8 +292,16 @@ describe('queries', () => {
         expect(meter.map((slot) => slot.kwh)).toEqual([0.4]);
         expect(await recentAverageDemand(FAR)).toBeNull();
         expect(await recentAverageDemand(Date.parse(today) + 10 * 60_000)).toBeNull();
-        // An invalid bound fails closed rather than lifting the cut-off.
-        expect(await consumptionBetween(yesterday, 'not a date')).toHaveLength(1);
+        // Bounds that SQLite compares as text after today's timestamps, whether
+        // or not they parse as dates, cannot lift the cut-off.
+        for (const to of ['9/1/2020', 'not a date', '2999-01-01T00:00:00+14:00', 'z']) {
+          expect((await consumptionBetween(yesterday, to)).map((s) => s.kwh)).toEqual([
+            0.4,
+          ]);
+          const meter = await telemetryBetween(yesterday, to, FAR);
+          expect(meter.map((s) => s.kwh)).toEqual([0.4]);
+        }
+        expect(await consumptionBetween(today, 'z')).toEqual([]);
       });
     });
 

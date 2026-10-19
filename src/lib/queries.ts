@@ -3,6 +3,7 @@
 import { env } from 'cloudflare:workers';
 import { and, asc, desc, eq, gt, gte, isNull, lt, lte, or } from 'drizzle-orm';
 import { drizzle } from 'drizzle-orm/d1';
+import type { SQLiteColumn } from 'drizzle-orm/sqlite-core';
 import * as schema from '../db/schema';
 import { HALF_HOUR_MS, type MeterSlot, type Slot } from './consumption';
 import type { UsageRate } from './cost';
@@ -19,13 +20,13 @@ export interface RateSlot {
 const db = () => drizzle(env.DB, { schema });
 
 /**
- * Away from home, usage ends at the London midnight that began today, whatever
- * the caller asks for: these are server functions, callable with any arguments.
+ * Away from home, usage ends at the London midnight that began today. These are
+ * server functions, callable with any arguments, so the cut-off is a separate
+ * SQL bound in the stored timestamp format rather than an adjusted argument:
+ * SQLite compares the text, and a caller's `to` need not be canonical.
  */
-function visibleTo(to: string): string {
-  if (isHome()) return to;
-  const midnight = londonMidnight(new Date().toISOString());
-  return Date.parse(to) < Date.parse(midnight) ? to : midnight;
+function visibleBefore(column: SQLiteColumn) {
+  return isHome() ? undefined : lt(column, londonMidnight(new Date().toISOString()));
 }
 
 /** Decides what the page offers; the data itself is gated by each query. */
@@ -41,7 +42,6 @@ const CAP_TARIFF = 'E-1R-VAR-22-11-01-C';
 const CAP_PAYMENT_METHOD = 'DIRECT_DEBIT';
 
 export async function consumptionBetween(from: string, to: string): Promise<Slot[]> {
-  to = visibleTo(to);
   return db()
     .select({ start: schema.consumption.intervalStart, kwh: schema.consumption.kwh })
     .from(schema.consumption)
@@ -49,6 +49,7 @@ export async function consumptionBetween(from: string, to: string): Promise<Slot
       and(
         gte(schema.consumption.intervalStart, from),
         lt(schema.consumption.intervalStart, to),
+        visibleBefore(schema.consumption.intervalStart),
       ),
     )
     .orderBy(asc(schema.consumption.intervalStart));
@@ -191,11 +192,16 @@ export async function telemetryBetween(
   now = Date.now(),
 ): Promise<MeterSlot[]> {
   if (!isHome()) now = Date.now();
-  to = visibleTo(to);
   const rows = await db()
     .select({ readAt: schema.telemetry.readAt, wh: schema.telemetry.consumptionWh })
     .from(schema.telemetry)
-    .where(and(gte(schema.telemetry.readAt, from), lt(schema.telemetry.readAt, to)))
+    .where(
+      and(
+        gte(schema.telemetry.readAt, from),
+        lt(schema.telemetry.readAt, to),
+        visibleBefore(schema.telemetry.readAt),
+      ),
+    )
     .orderBy(asc(schema.telemetry.readAt));
 
   return rows.flatMap((row) => {

@@ -2,6 +2,7 @@ import { createExecutionContext, env, waitOnExecutionContext } from 'cloudflare:
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { addLondonDays, londonMidnight } from './lib/format';
 import { HOME_ADDRESS_TTL_MS } from './lib/home';
+import { consumptionBetween, recentAverageDemand, telemetryBetween } from './lib/queries';
 import worker from './worker';
 
 const HOME_IP = '192.0.2.10';
@@ -46,6 +47,26 @@ async function call(
   const body = await response.text();
   await waitOnExecutionContext(ctx);
   return { response, body };
+}
+
+/** A browser-shaped server-function call, with arguments chosen by the caller. */
+function callServer(
+  fn: unknown,
+  args: unknown[],
+  init: { ip?: string; cookie?: string } = {},
+) {
+  return call('/_server', {
+    ...init,
+    method: 'POST',
+    headers: {
+      Origin: 'https://ldn.house',
+      'Content-Type': 'application/json',
+      'X-Server-Function-Id': (fn as { id: string }).id,
+      'X-Server-Function-Instance': '1',
+      'X-Server-Function-Format': '8',
+    },
+    body: JSON.stringify(args),
+  });
 }
 
 async function reportHome(reportedAt: number, ipv6Prefix: string | null = null) {
@@ -141,6 +162,29 @@ describe('home gate', () => {
       expect(cache).toEqual({ next_fetch_at: 0, lease_token: null });
     });
 
+    it('get nothing from today out of /_server, whatever the arguments', async () => {
+      await reportHome(now - 60_000);
+      const FAR = Date.parse('2999-01-01T00:00:00Z');
+      // Text that sorts after today's timestamps, parseable as a date or not.
+      for (const to of ['2999-01-01T00:00:00Z', '9/1/2020', 'not a date', 'z']) {
+        for (const [fn, args] of [
+          [consumptionBetween, [yesterday, to]],
+          [telemetryBetween, [yesterday, to, FAR]],
+        ] as const) {
+          const { response, body } = await callServer(fn, [...args], { ip: AWAY_IP });
+          expect(response.status).toBe(200);
+          expectNoTodayData(body);
+        }
+      }
+      const average = await callServer(recentAverageDemand, [FAR], { ip: AWAY_IP });
+      expect(average.body).toBe('null');
+      // The same call from home does return today, so the checks above can fail.
+      const home = await callServer(consumptionBetween, [yesterday, 'z'], {
+        ip: HOME_IP,
+      });
+      expect(home.body).toContain(String(TODAY_KWH));
+    });
+
     it('stop matching once the address goes stale', async () => {
       await reportHome(now - HOME_ADDRESS_TTL_MS - 5_000);
       const { response, body } = await call('/', { ip: HOME_IP });
@@ -158,7 +202,10 @@ describe('home gate', () => {
       await reportHome(now - 60_000);
       const { response: issued } = await call('/', { ip: HOME_IP });
       const cookie = cookieFrom(issued)!;
-      const forged = `${cookie.slice(0, -1)}${cookie.endsWith('A') ? 'B' : 'A'}`;
+      // Change a character that carries signature bits; the last one partly
+      // encodes base64 padding, which decodes identically.
+      const at = cookie.length - 10;
+      const forged = `${cookie.slice(0, at)}${cookie[at] === 'A' ? 'B' : 'A'}${cookie.slice(at + 1)}`;
       for (const [value, overrides] of [
         [forged, {}],
         [cookie, { HOME_COOKIE_SECRET: 'rotated-secret' }],

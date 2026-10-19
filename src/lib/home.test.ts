@@ -127,7 +127,8 @@ describe('home cookie', () => {
   it('rejects tampering and a rotated secret', async () => {
     const cookie = await signHomeCookie(SECRET, NOW);
     const [version, expires, signature] = cookie.split('.') as [string, string, string];
-    const flipped = `${signature.slice(0, -1)}${signature.endsWith('A') ? 'B' : 'A'}`;
+    // The final character partly encodes padding bits, so change the first.
+    const flipped = `${signature.startsWith('A') ? 'B' : 'A'}${signature.slice(1)}`;
     for (const forged of [
       `${version}.${expires}.${flipped}`,
       `${version}.${Number(expires) + 86_400}.${signature}`,
