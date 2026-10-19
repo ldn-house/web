@@ -120,6 +120,32 @@ export async function usageRatesBetween(from: string, to: string): Promise<Usage
   });
 }
 
+/** Pence per day with VAT, for the tariff in force at `at`. */
+export async function standingChargeAt(at: string): Promise<number | null> {
+  const tariffCode = await tariffInForce(at);
+  if (!tariffCode) return null;
+  const [charge] = await db()
+    .select({ pIncVat: schema.standingCharges.pIncVat })
+    .from(schema.standingCharges)
+    .where(
+      and(
+        eq(schema.standingCharges.tariffCode, tariffCode),
+        or(
+          eq(schema.standingCharges.paymentMethod, CAP_PAYMENT_METHOD),
+          eq(schema.standingCharges.paymentMethod, 'ANY'),
+        ),
+        lte(schema.standingCharges.validFrom, at),
+        or(
+          isNull(schema.standingCharges.validTo),
+          gt(schema.standingCharges.validTo, at),
+        ),
+      ),
+    )
+    .orderBy(desc(schema.standingCharges.validFrom))
+    .limit(1);
+  return charge?.pIncVat ?? null;
+}
+
 export async function cappedRate(at: string): Promise<number | null> {
   const [rate] = await db()
     .select({ pIncVat: schema.unitRates.pIncVat })
