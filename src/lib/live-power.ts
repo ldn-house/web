@@ -27,11 +27,10 @@ export async function livePowerResponse(
   options: { now?: () => number; fetchImpl?: Fetcher } = {},
 ): Promise<Response> {
   const clock = options.now ?? Date.now;
+  // No feed to wait for, as on PR previews: tell the client to stop asking,
+  // without an error status. Upstream failures still answer 503.
   if (!apiKey)
-    return responseFor(
-      { reading: null, next_fetch_at: clock() + LIVE_REFRESH_MS, lease_token: null },
-      clock(),
-    );
+    return new Response(null, { status: 204, headers: { 'Cache-Control': 'no-store' } });
   const now = clock();
   const lease = crypto.randomUUID();
   // The conditional upsert is atomic: only one request can win each refresh.

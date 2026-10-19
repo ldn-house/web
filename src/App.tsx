@@ -191,6 +191,12 @@ export default function App() {
             5_000,
             retryAfterMs(response.headers.get('Retry-After')) ?? LIVE_REFRESH_MS,
           );
+        // This deployment has no live feed, so there is nothing to poll for.
+        if (response.status === 204) {
+          nextPollAt = Infinity;
+          clearLiveDemand();
+          return;
+        }
         if (!response.ok) {
           clearLiveDemand();
           return;
