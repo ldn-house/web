@@ -5,3 +5,5 @@ wrangler.preview.json
 .dev.vars
 *.local
 .DS_Store
+/src/tree-export/
+/src/tree-export.tmp/

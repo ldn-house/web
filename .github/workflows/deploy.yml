@@ -48,6 +48,8 @@ jobs:
         env:
           PR_NUMBER: ${{ github.event.number }}
 
+      - run: bun scripts/fetch-tree-export.ts --optional
+
       # The Cloudflare plugin reads this and writes the matching deploy redirect,
       # so the deploy below needs no --config of its own.
       - name: Build
@@ -117,6 +119,7 @@ jobs:
         env:
           CI: "true"
 
+      - run: bun scripts/fetch-tree-export.ts --optional
       - run: bun run build
       - run: bunx wrangler deploy
 

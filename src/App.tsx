@@ -2,6 +2,7 @@ import type { JSX } from '@solidjs/web';
 import { createEffect, createMemo, createSignal, onSettled, Show } from 'solid-js';
 import { RateChart } from './components/RateChart';
 import type { Window as ChartWindow } from './components/TimeAxis';
+import { TreePanel } from './components/TreePanel';
 import { UsageChart } from './components/UsageChart';
 import { recentDayBounds } from './lib/chart';
 import {
@@ -358,6 +359,8 @@ export default function App() {
           </Show>
         </Show>
       </Panel>
+
+      <TreePanel />
     </main>
   );
 }

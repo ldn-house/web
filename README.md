@@ -49,7 +49,15 @@ Workers Scripts edit, D1 edit and Workers Routes edit.
 bun cf-typegen                    # after changing bindings in wrangler.jsonc
 bun run db:generate               # after changing src/db/schema.ts
 bun scripts/capture-fixture.ts 14 # re-record src/fixtures/octopus.json
+bun scripts/fetch-tree-export.ts  # tree animations into src/tree-export/
 ```
+
+The Christmas tree panel plays loops pre-rendered by
+[ldn-house/tree](https://github.com/ldn-house/tree) (`export_web.py`), published as
+`tree-effects.tar.gz` on its rolling `firmware-main` release. Deploys fetch the
+latest at build time; a tree-side change reaches the site with the next deploy.
+Without the export, locally or when the download fails, the panel is left out.
+The script also takes a local archive or export directory.
 
 `worker-configuration.d.ts` is generated but committed so CI can typecheck
 without Cloudflare credentials. The fixture is a scrubbed capture of the live
