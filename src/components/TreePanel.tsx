@@ -77,12 +77,12 @@ export function TreePanel(props: { playing?: string }) {
   const effectOf = (name: string | undefined) => effects.find((e) => e.name === name);
 
   const cache = new Map<string, Promise<Uint8Array>>();
-  let loadFrames: typeof import('./tree-player').loadFrames | undefined;
+  let module: typeof import('./tree-player') | undefined;
   const frames = (name: string) => {
     const effect = effectOf(name)!;
     let pending = cache.get(name);
-    if (!pending && loadFrames) {
-      pending = loadFrames(framesUrl(name)!, effect.frames * index.leds * 3);
+    if (!pending && module) {
+      pending = module.loadFrames(framesUrl(name)!, effect.frames * index.leds * 3);
       pending.catch(() => cache.delete(name));
       cache.set(name, pending);
     }
@@ -105,14 +105,13 @@ export function TreePanel(props: { playing?: string }) {
       if (!p) return;
       let current = true;
       frames(name)
-        ?.then(async (data) => {
-          if (!current) return;
-          const { brightestFrame } = await import('./tree-player');
+        ?.then((data) => {
+          if (!current || !module) return;
           const effect = effectOf(name)!;
           p.show(
             data,
             effect.frames,
-            reducedMotion ? brightestFrame(data, effect.frames) : 0,
+            reducedMotion ? module.brightestFrame(data, effect.frames) : 0,
           );
           loopsShown = 0;
           setDisplayed(name);
@@ -129,6 +128,16 @@ export function TreePanel(props: { playing?: string }) {
   createEffect(
     () => [paused(), player()] as const,
     ([isPaused, p]) => p?.setPaused(isPaused),
+  );
+
+  // A single-frame effect never loops, so its turn in the showcase is timed.
+  createEffect(
+    () => [displayed(), cycling()] as const,
+    ([name, isCycling]) => {
+      if (!isCycling || effectOf(name)?.frames !== 1) return;
+      const timer = setTimeout(() => setShowcase((i) => i + 1), SHOWCASE_DWELL_S * 1000);
+      return () => clearTimeout(timer);
+    },
   );
 
   onSettled(() => {
@@ -153,7 +162,7 @@ export function TreePanel(props: { playing?: string }) {
     let started: TreePlayer | undefined;
     let visible = false;
     const start = async () => {
-      const [module, coords] = await Promise.all([
+      const [loaded, coords] = await Promise.all([
         import('./tree-player'),
         fetch(coordsUrl!).then((r) => {
           if (!r.ok) throw new Error(`coordinates: HTTP ${r.status}`);
@@ -161,13 +170,14 @@ export function TreePanel(props: { playing?: string }) {
         }),
       ]);
       if (disposed) return;
-      loadFrames = module.loadFrames;
+      module = loaded;
       started =
-        module.createTreePlayer(canvas!, stage!, {
+        loaded.createTreePlayer(canvas!, stage!, {
           coords,
           fps: index.fps,
           onLoop,
           onLost: () => {
+            setPlayer(undefined);
             setLive(false);
             setEnhanced(false);
           },
@@ -181,25 +191,30 @@ export function TreePanel(props: { playing?: string }) {
       setPlayer(started);
     };
 
-    let starting: Promise<void> | undefined;
-    const observer = new IntersectionObserver(
+    // Loading starts a little before the panel scrolls in; playback only
+    // runs while it is actually on screen.
+    const nearby = new IntersectionObserver(
       ([entry]) => {
-        visible = !!entry?.isIntersecting;
-        started?.setVisible(visible);
-        if (visible && !starting) {
-          starting = start().catch((error) => {
-            console.warn('tree player failed to start', error);
-            setEnhanced(false);
-          });
-        }
+        if (!entry?.isIntersecting) return;
+        nearby.disconnect();
+        start().catch((error) => {
+          console.warn('tree player failed to start', error);
+          setEnhanced(false);
+        });
       },
       { rootMargin: '200px 0px' },
     );
-    observer.observe(stage);
+    nearby.observe(stage);
+    const onScreen = new IntersectionObserver(([entry]) => {
+      visible = !!entry?.isIntersecting;
+      started?.setVisible(visible);
+    });
+    onScreen.observe(stage);
 
     return () => {
       disposed = true;
-      observer.disconnect();
+      nearby.disconnect();
+      onScreen.disconnect();
       motion.removeEventListener('change', onMotion);
       started?.destroy();
     };

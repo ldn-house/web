@@ -159,6 +159,8 @@ export function createTreePlayer(
   let dirty = true;
   let raf = 0;
   let last = 0;
+  let stopped = false;
+  let dragging: { id: number; x: number; t: number } | undefined;
 
   const resize = () => {
     const dpr = Math.min(globalThis.devicePixelRatio || 1, 2);
@@ -206,7 +208,9 @@ export function createTreePlayer(
         options.onLoop?.();
       }
     }
-    if (spin) {
+    if (options.reducedMotion()) spin = 0;
+    // Inertia only after release; while held, the pointer sets the angle.
+    if (spin && !dragging) {
       angle += spin * dt;
       spin *= Math.exp(-dt * 4);
       if (Math.abs(spin) < 0.02) spin = 0;
@@ -218,8 +222,9 @@ export function createTreePlayer(
   };
 
   function schedule() {
-    const animating = frames && !paused;
-    if (raf || !visible || !(animating || spin || dirty)) {
+    const animating = frames && !paused && count > 1;
+    const coasting = spin && !dragging;
+    if (stopped || raf || !visible || !(animating || coasting || dirty)) {
       if (!raf) last = 0;
       return;
     }
@@ -227,7 +232,6 @@ export function createTreePlayer(
   }
 
   // Dragging turns the tree about its trunk; a flick keeps it turning briefly.
-  let dragging: { id: number; x: number; t: number } | undefined;
   const onDown = (event: PointerEvent) => {
     if (event.button !== 0) return;
     dragging = { id: event.pointerId, x: event.clientX, t: event.timeStamp };
@@ -248,7 +252,7 @@ export function createTreePlayer(
   const onUp = (event: PointerEvent) => {
     if (!dragging || event.pointerId !== dragging.id) return;
     // A pause before release means the user meant to stop it there.
-    if (event.timeStamp - dragging.t > 80) spin = 0;
+    if (event.type === 'pointercancel' || event.timeStamp - dragging.t > 80) spin = 0;
     dragging = undefined;
     schedule();
   };
@@ -257,11 +261,11 @@ export function createTreePlayer(
   surface.addEventListener('pointerup', onUp);
   surface.addEventListener('pointercancel', onUp);
 
-  const onLost = (event: Event) => {
-    event.preventDefault();
+  // A lost context stays lost: the panel falls back to the server SVG.
+  const onLost = () => {
+    stopped = true;
     cancelAnimationFrame(raf);
     raf = 0;
-    visible = false;
     options.onLost?.();
   };
   canvas.addEventListener('webglcontextlost', onLost);
@@ -294,6 +298,7 @@ export function createTreePlayer(
       schedule();
     },
     destroy() {
+      stopped = true;
       cancelAnimationFrame(raf);
       observer.disconnect();
       surface.removeEventListener('pointerdown', onDown);
