@@ -92,3 +92,13 @@ export function dayTicks(fromIso: string, toIso: string): TimeTick[] {
   }
   return ticks;
 }
+
+/** "now" once `iso` has started, otherwise "in 2h 30m". */
+export function timeUntil(iso: string, nowIso: string): string {
+  const minutes = Math.ceil((Date.parse(iso) - Date.parse(nowIso)) / 60_000);
+  if (minutes <= 0) return 'now';
+  const hours = Math.floor(minutes / 60);
+  const rest = minutes % 60;
+  if (hours === 0) return `in ${rest}m`;
+  return rest === 0 ? `in ${hours}h` : `in ${hours}h ${rest}m`;
+}

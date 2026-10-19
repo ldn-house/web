@@ -1,5 +1,5 @@
 import type { JSX } from '@solidjs/web';
-import { createEffect, createMemo, createSignal, onSettled, Show } from 'solid-js';
+import { createEffect, createMemo, createSignal, For, onSettled, Show } from 'solid-js';
 import { RateChart } from './components/RateChart';
 import type { Window as ChartWindow } from './components/TimeAxis';
 import { UsageChart } from './components/UsageChart';
@@ -10,7 +10,15 @@ import {
   type MeterSlot,
   mergeConsumption,
 } from './lib/consumption';
-import { addLondonDays, londonDay, londonMidnight, londonTime } from './lib/format';
+import {
+  addLondonDays,
+  londonDay,
+  londonMidnight,
+  londonTime,
+  pounds,
+  timeUntil,
+} from './lib/format';
+import { cheapestWindow, rateAt, spendSince } from './lib/headline';
 import {
   LIVE_READING_MAX_AGE_MS,
   LIVE_REFRESH_MS,
@@ -19,9 +27,9 @@ import {
 import {
   cappedRate,
   consumptionBetween,
-  type RateSlot,
   ratesBetween,
   recentAverageDemand,
+  standingChargeAt,
   telemetryBetween,
   usageRatesBetween,
 } from './lib/queries';
@@ -49,10 +57,27 @@ function Panel(props: {
           </p>
         </Show>
       </div>
-      <div class="mt-4">{props.children}</div>
+      <div class="mt-3">{props.children}</div>
     </section>
   );
 }
+
+/** The answer a panel leads with: one figure, what it is, and its caveats. */
+function Figure(props: { value: string; label: string; detail: string }) {
+  return (
+    <div>
+      <p class="flex items-baseline gap-2">
+        <span class="text-2xl font-semibold tracking-tight tabular-nums text-neutral-100">
+          {props.value}
+        </span>
+        <span class="text-sm text-neutral-400">{props.label}</span>
+      </p>
+      <p class="mt-1 text-xs tabular-nums text-neutral-500">{props.detail}</p>
+    </div>
+  );
+}
+
+const WINDOW_HOURS = [1, 2, 3] as const;
 
 export default function App() {
   // Fetch yesterday through tomorrow. Both charts share yesterday and today,
@@ -117,6 +142,7 @@ export default function App() {
     return { from: bounds[0], to: bounds[1], now: now() };
   });
   const cap = createMemo(async () => cappedRate(today()));
+  const standingCharge = createMemo(async () => standingChargeAt(today()));
 
   onSettled(() => {
     if (typeof document === 'undefined') return;
@@ -256,20 +282,49 @@ export default function App() {
     { defer: true },
   );
 
-  const total = () => usage().reduce((sum, slot) => sum + slot.kwh, 0);
-  const current = () =>
-    rates().find(
-      (r) =>
-        Date.parse(r.start) <= Date.parse(now()) &&
-        Date.parse(r.start) + HALF_HOUR_MS > Date.parse(now()),
-    );
-  const cheapestAhead = () =>
-    rates()
-      .filter((r) => Date.parse(r.start) >= Date.parse(now()))
-      .reduce<RateSlot | undefined>(
-        (best, r) => (!best || r.pIncVat < best.pIncVat ? r : best),
-        undefined,
-      );
+  const spend = createMemo(() => spendSince(today(), usage(), usageRates()));
+  const spendDetail = () => {
+    const { through, kwh, missing, unpriced } = spend();
+    const halfHours = (count: number) =>
+      count === 1 ? '1 half-hour has' : `${count} half-hours have`;
+    const pence = standingCharge();
+    return [
+      through
+        ? `${kwh.toFixed(2)} kWh to ${londonTime(through)}, priced at each half-hour's Agile rate with VAT.`
+        : 'No readings yet today.',
+      missing ? `${halfHours(missing)} no reading.` : '',
+      unpriced
+        ? `${halfHours(unpriced)} no price and ${unpriced === 1 ? 'is' : 'are'} left out.`
+        : '',
+      pence === null
+        ? 'Excludes the daily standing charge.'
+        : `Excludes the ${pence.toFixed(2)}p daily standing charge.`,
+    ]
+      .filter(Boolean)
+      .join(' ');
+  };
+  const current = () => rateAt(rates(), Date.parse(now()));
+  const next = () => {
+    const slot = current();
+    return slot ? rateAt(rates(), Date.parse(slot.start) + HALF_HOUR_MS) : undefined;
+  };
+  const windows = createMemo(() =>
+    WINDOW_HOURS.flatMap((hours) => {
+      const window = cheapestWindow(rates(), Date.parse(now()), hours * 2);
+      return window ? [{ hours, ...window }] : [];
+    }),
+  );
+  /** Times on another London day than today carry their day. */
+  const dayTime = (iso: string) =>
+    londonMidnight(iso) === today()
+      ? londonTime(iso)
+      : `${londonDay(iso)} ${londonTime(iso)}`;
+  const publishedTo = () => {
+    const last = rates().at(-1);
+    return last
+      ? new Date(Date.parse(last.start) + HALF_HOUR_MS).toISOString()
+      : undefined;
+  };
 
   return (
     <main class="mx-auto max-w-3xl px-6 py-16">
@@ -298,65 +353,111 @@ export default function App() {
               : undefined
         }
       >
-        <Show
-          when={usage().length}
-          fallback={<p class="text-sm text-neutral-500">No readings yet.</p>}
-        >
-          <UsageChart
-            slots={usage()}
-            rates={usageRates()}
-            window={chartWindow()}
-            live={!!liveDemand()}
-          />
-          <p class="mt-3 text-xs text-neutral-500">
-            {total().toFixed(1)} kWh since {londonDay(usage()[0]!.start)}
-            <Show when={usage().at(-1)}>
-              {(last) => (
-                <>
-                  {' '}
-                  · through {londonDay(last().through)} {londonTime(last().through)}
-                </>
-              )}
-            </Show>
-          </p>
-          <p class="mt-1 text-xs text-neutral-500">
-            Usage costs include VAT, excluding standing charge.
-          </p>
-        </Show>
+        <Figure
+          value={spend().through ? pounds(spend().gbp) : '£0.00'}
+          label="spent today"
+          detail={spendDetail()}
+        />
+        <div class="mt-4">
+          <Show
+            when={usage().length}
+            fallback={<p class="text-sm text-neutral-500">No readings yet.</p>}
+          >
+            <UsageChart
+              slots={usage()}
+              rates={usageRates()}
+              window={chartWindow()}
+              live={!!liveDemand()}
+            />
+          </Show>
+        </div>
       </Panel>
 
-      <Panel
-        title="Electricity unit rate"
-        aside={current() ? `${current()!.pIncVat.toFixed(2)}p/kWh now` : undefined}
-      >
-        <Show
-          when={rates().length}
-          fallback={<p class="text-sm text-neutral-500">No rates published.</p>}
-        >
-          <RateChart rates={rates()} cap={cap()} window={chartWindow()} />
-          <ul class="mt-2 flex gap-5 text-xs text-neutral-400">
-            <li class="flex items-center gap-2">
-              <span class="inline-block h-0.5 w-5 bg-accent" />
-              Agile
-            </li>
-            <Show when={cap()}>
-              {(value) => (
-                <li class="flex items-center gap-2">
-                  <span class="inline-block h-0 w-5 border-t border-dashed border-sky-400" />
-                  Price cap (SVT) {value().toFixed(1)}p/kWh
-                </li>
+      <Panel title="Electricity unit rate">
+        <div class="flex flex-wrap gap-x-12 gap-y-4">
+          <div class="flex gap-x-8">
+            <Show
+              when={current()}
+              fallback={<Figure value="–" label="now" detail="No rate published" />}
+            >
+              {(slot) => (
+                <Figure
+                  value={`${slot().pIncVat.toFixed(2)}p`}
+                  label="now"
+                  detail={`Per kWh until ${londonTime(new Date(Date.parse(slot().start) + HALF_HOUR_MS).toISOString())}`}
+                />
               )}
             </Show>
-          </ul>
-          <Show when={cheapestAhead()}>
-            {(slot) => (
-              <p class="mt-3 text-xs text-neutral-500">
-                Cheapest ahead {slot().pIncVat.toFixed(2)}p at {londonDay(slot().start)}{' '}
-                {londonTime(slot().start)}
-              </p>
-            )}
+            <Show
+              when={next()}
+              fallback={<Figure value="–" label="next" detail="Not yet published" />}
+            >
+              {(following) => (
+                <Figure
+                  value={`${following().pIncVat.toFixed(2)}p`}
+                  label="next"
+                  detail={`From ${londonTime(following().start)}`}
+                />
+              )}
+            </Show>
+          </div>
+          <Show when={windows().length}>
+            <table class="text-sm tabular-nums">
+              <caption class="mb-1 text-left text-xs text-neutral-500">
+                Cheapest time to run something for
+              </caption>
+              <tbody>
+                <For each={windows()}>
+                  {(window) => (
+                    <tr>
+                      <th scope="row" class="pr-4 text-left font-normal text-neutral-400">
+                        {window.hours} hour{window.hours === 1 ? '' : 's'}
+                      </th>
+                      <td class="pr-4 text-neutral-300">
+                        {dayTime(window.start)}–{londonTime(window.end)}
+                      </td>
+                      <td class="pr-4 text-right text-neutral-100">
+                        {window.average.toFixed(2)}p
+                      </td>
+                      <td class="text-neutral-400">{timeUntil(window.start, now())}</td>
+                    </tr>
+                  )}
+                </For>
+              </tbody>
+            </table>
           </Show>
-        </Show>
+        </div>
+        <div class="mt-4">
+          <Show
+            when={rates().length}
+            fallback={<p class="text-sm text-neutral-500">No rates published.</p>}
+          >
+            <RateChart rates={rates()} cap={cap()} window={chartWindow()} />
+            <ul class="mt-2 flex gap-5 text-xs text-neutral-400">
+              <li class="flex items-center gap-2">
+                <span class="inline-block h-0.5 w-5 bg-accent" />
+                Agile
+              </li>
+              <Show when={cap()}>
+                {(value) => (
+                  <li class="flex items-center gap-2">
+                    <span class="inline-block h-0 w-5 border-t border-dashed border-sky-400" />
+                    Price cap (SVT) {value().toFixed(1)}p/kWh
+                  </li>
+                )}
+              </Show>
+            </ul>
+            <Show when={publishedTo()}>
+              {(end) => (
+                <p class="mt-3 text-xs text-neutral-500">
+                  Unit rates include VAT; windows show their average. Rates are published
+                  to {dayTime(end())}, and the next day's usually arrive between 16:00 and
+                  20:00.
+                </p>
+              )}
+            </Show>
+          </Show>
+        </div>
       </Panel>
     </main>
   );

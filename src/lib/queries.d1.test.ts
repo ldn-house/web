@@ -5,6 +5,7 @@ import {
   consumptionBetween,
   ratesBetween,
   recentAverageDemand,
+  standingChargeAt,
   telemetryBetween,
   usageRatesBetween,
 } from './queries';
@@ -28,6 +29,7 @@ describe('queries', () => {
       env.DB.prepare('DELETE FROM unit_rates'),
       env.DB.prepare('DELETE FROM agreements'),
       env.DB.prepare('DELETE FROM telemetry'),
+      env.DB.prepare('DELETE FROM standing_charges'),
     ]);
   });
 
@@ -208,5 +210,38 @@ describe('queries', () => {
 
   it('returns no demand when there is no telemetry', async () => {
     expect(await recentAverageDemand()).toBeNull();
+  });
+
+  it('reads the standing charge of the tariff in force, preferring Direct Debit', async () => {
+    await seed(
+      'INSERT INTO agreements (tariff_code, valid_from, valid_to) VALUES (?,?,?), (?,?,?)',
+      FLEXIBLE,
+      '2025-01-01T00:00:00Z',
+      '2026-01-01T00:00:00Z',
+      AGILE,
+      '2026-01-01T00:00:00Z',
+      null,
+    );
+    const charges: [string, string, string, string | null, number][] = [
+      [FLEXIBLE, '2025-01-01T00:00:00Z', 'DIRECT_DEBIT', null, 50],
+      [FLEXIBLE, '2025-01-01T00:00:00Z', 'NON_DIRECT_DEBIT', null, 60],
+      [AGILE, '2025-01-01T00:00:00Z', 'ANY', '2026-02-01T00:00:00Z', 40],
+      [AGILE, '2026-02-01T00:00:00Z', 'ANY', null, 45],
+    ];
+    for (const [tariff, from, method, to, price] of charges) {
+      await seed(
+        'INSERT INTO standing_charges (tariff_code, valid_from, payment_method, valid_to, p_inc_vat, p_exc_vat) VALUES (?,?,?,?,?,?)',
+        tariff,
+        from,
+        method,
+        to,
+        price,
+        price / 1.05,
+      );
+    }
+    expect(await standingChargeAt('2025-06-01T00:00:00Z')).toBe(50);
+    expect(await standingChargeAt('2026-01-15T00:00:00Z')).toBe(40);
+    expect(await standingChargeAt('2026-03-01T00:00:00Z')).toBe(45);
+    expect(await standingChargeAt('2024-06-01T00:00:00Z')).toBeNull();
   });
 });
