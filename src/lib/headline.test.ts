@@ -75,9 +75,20 @@ describe('cheapestWindow', () => {
     });
   });
 
-  it('can start in the current half-hour but not in one that has ended', () => {
-    expect(cheapestWindow(rates, Date.parse(at(45)), 1)?.start).toBe(at(30));
-    expect(cheapestWindow(rates, Date.parse(at(60)), 1)?.start).toBe(at(120));
+  it('prices a window starting now by the time left in this half-hour', () => {
+    const steep = [1, 1, 100, 5, 5].map((p, i) => rate(i * 30, p));
+    expect(cheapestWindow(steep, Date.parse(at(29)), 2)).toEqual({
+      start: at(90),
+      end: at(150),
+      average: 5,
+    });
+    const flat = [5, 5, 5, 50].map((p, i) => rate(i * 30, p));
+    expect(cheapestWindow(flat, Date.parse(at(10)), 2)).toEqual({
+      start: at(10),
+      end: at(70),
+      average: 5,
+    });
+    expect(cheapestWindow(rates, Date.parse(at(45)), 1)?.start).toBe(at(120));
   });
 
   it('does not bridge a gap in published rates', () => {
@@ -89,5 +100,7 @@ describe('cheapestWindow', () => {
     const flat = [rate(0, 5), rate(30, 5), rate(60, 5)];
     expect(cheapestWindow(flat, Date.parse(at(0)), 2)?.start).toBe(at(0));
     expect(cheapestWindow(flat, Date.parse(at(0)), 4)).toBeUndefined();
+    const rounding = [15.15, 15.15, 100, 10.1, 20.2].map((p, i) => rate(i * 30, p));
+    expect(cheapestWindow(rounding, Date.parse(at(0)), 2)?.start).toBe(at(0));
   });
 });

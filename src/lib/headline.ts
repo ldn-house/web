@@ -59,29 +59,42 @@ export interface RateWindow {
 }
 
 /**
- * The lowest average price over `periods` consecutive half-hours, starting no
- * earlier than the half-hour containing `at`. Earliest wins a tie.
+ * The lowest time-weighted average price over `periods` half-hours, starting
+ * either at `at` or on a later half-hour boundary. Every minute of a window
+ * needs a published rate. Earliest wins a tie.
  */
 export function cheapestWindow(
   rates: readonly RatePeriod[],
   at: number,
   periods: number,
 ): RateWindow | undefined {
-  const ahead = rates
-    .map((rate) => ({ start: Date.parse(rate.start), pIncVat: rate.pIncVat }))
-    .filter((rate) => rate.start + HALF_HOUR_MS > at)
-    .sort((a, b) => a.start - b.start);
+  const prices = new Map(rates.map((rate) => [Date.parse(rate.start), rate.pIncVat]));
+  const duration = periods * HALF_HOUR_MS;
+  const later = [...prices.keys()].filter((start) => start > at).sort((a, b) => a - b);
   let best: { start: number; average: number } | undefined;
-  for (let i = 0; i + periods <= ahead.length; i += 1) {
-    const run = ahead.slice(i, i + periods);
-    if (run.some((rate, k) => rate.start !== run[0]!.start + k * HALF_HOUR_MS)) continue;
-    const average = run.reduce((sum, rate) => sum + rate.pIncVat, 0) / periods;
-    if (!best || average < best.average) best = { start: run[0]!.start, average };
+  for (const start of [at, ...later]) {
+    let pence = 0;
+    let covered = true;
+    for (let t = start; t < start + duration; ) {
+      const period = Math.floor(t / HALF_HOUR_MS) * HALF_HOUR_MS;
+      const price = prices.get(period);
+      if (price === undefined) {
+        covered = false;
+        break;
+      }
+      const until = Math.min(period + HALF_HOUR_MS, start + duration);
+      pence += price * (until - t);
+      t = until;
+    }
+    if (!covered) continue;
+    const average = pence / duration;
+    // Below the precision Octopus publishes, so equal prices stay a tie.
+    if (!best || average < best.average - 1e-9) best = { start, average };
   }
   if (!best) return undefined;
   return {
     start: new Date(best.start).toISOString(),
-    end: new Date(best.start + periods * HALF_HOUR_MS).toISOString(),
+    end: new Date(best.start + duration).toISOString(),
     average: best.average,
   };
 }

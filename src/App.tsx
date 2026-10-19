@@ -15,6 +15,7 @@ import {
   londonDay,
   londonMidnight,
   londonTime,
+  londonTimeSpan,
   pounds,
   timeUntil,
 } from './lib/format';
@@ -82,7 +83,12 @@ const WINDOW_HOURS = [1, 2, 3] as const;
 export default function App() {
   // Fetch yesterday through tomorrow. Both charts share yesterday and today,
   // adding tomorrow to their common axis once those rates are published.
-  const [now, setNow] = createSignal(new Date().toISOString());
+  // Hydrate against the server's clock, so time-derived markup matches the HTML.
+  const renderedAt =
+    (typeof document === 'undefined'
+      ? undefined
+      : document.querySelector('main')?.dataset.renderedAt) ?? new Date().toISOString();
+  const [now, setNow] = createSignal(renderedAt);
   const today = createMemo(() => londonMidnight(now()));
   const period = createMemo(() => Math.floor(Date.parse(now()) / HALF_HOUR_MS));
   const queryWindow = createMemo(() => ({
@@ -327,7 +333,7 @@ export default function App() {
   };
 
   return (
-    <main class="mx-auto max-w-3xl px-6 py-16">
+    <main class="mx-auto max-w-3xl px-6 py-16" data-rendered-at={renderedAt}>
       <h1 class="text-3xl font-semibold tracking-tight">ldn.house</h1>
       <p class="mt-3 text-neutral-400">
         Energy and climate data for one house in London.
@@ -414,7 +420,10 @@ export default function App() {
                         {window.hours} hour{window.hours === 1 ? '' : 's'}
                       </th>
                       <td class="pr-4 text-neutral-300">
-                        {dayTime(window.start)}–{londonTime(window.end)}
+                        {londonMidnight(window.start) === today()
+                          ? ''
+                          : `${londonDay(window.start)} `}
+                        {londonTimeSpan(window.start, window.end)}
                       </td>
                       <td class="pr-4 text-right text-neutral-100">
                         {window.average.toFixed(2)}p
