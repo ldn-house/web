@@ -53,8 +53,10 @@ inside older periods, and cannot repair historical gaps by itself.
 
 A GitHub Actions workflow owns deploys. Workers Builds is disconnected.
 
-**Apex launch is held pending the live-power privacy decision.** Keep the launch
-PR in draft; merging to `main` publishes the apex, so draft status alone is not a
+**Apex launch is held on [privacy PR #26](https://github.com/ldn-house/web/pull/26).**
+Its security review, non-CGNAT confirmation, Worker secrets and Home Assistant
+setup must be complete, and its merged behavior verified. Keep the launch PR in
+draft; merging to `main` publishes the apex, so draft status alone is not a
 deployment guard. Complete the [launch checklist](docs/apex-launch.md) first.
 Production config binds exactly `ldn.house`, `www.ldn.house` and
 `preview.ldn.house`; `dashboard.ldn.house` remains separate. The Worker redirects
@@ -62,6 +64,10 @@ Production config binds exactly `ldn.house`, `www.ldn.house` and
 `preview.ldn.house` keeps serving the app. The canonical and social URLs use the
 apex; preview hosts discourage indexing via `robots.txt` and `X-Robots-Tag`.
 These are crawler hints, not access controls or a live-data privacy solution.
+At launch, switch Home Assistant’s report URL from
+`https://preview.ldn.house/api/home/address` to
+`https://ldn.house/api/home/address`; both share the Worker and D1 during transition.
+Home cookies are host-only, so visit the apex from home to obtain its own cookie.
 
 | Trigger | Effect |
 |---|---|
