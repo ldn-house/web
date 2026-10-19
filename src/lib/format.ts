@@ -92,3 +92,30 @@ export function dayTicks(fromIso: string, toIso: string): TimeTick[] {
   }
   return ticks;
 }
+
+/** "now" once `iso` has started, otherwise "in 2h 30m". */
+export function timeUntil(iso: string, nowIso: string): string {
+  const minutes = Math.ceil((Date.parse(iso) - Date.parse(nowIso)) / 60_000);
+  if (minutes <= 0) return 'now';
+  const hours = Math.floor(minutes / 60);
+  const rest = minutes % 60;
+  if (hours === 0) return `in ${rest}m`;
+  return rest === 0 ? `in ${hours}h` : `in ${hours}h ${rest}m`;
+}
+
+/** Adds BST/GMT when the clocks change in, or an hour before, the span. */
+export function londonTimeSpan(fromIso: string, toIso: string): string {
+  const from = Date.parse(fromIso);
+  const offsets = new Set(
+    [from - 3_600_000, from, Date.parse(toIso)].map(londonOffsetMs),
+  );
+  if (offsets.size === 1) return `${londonTime(fromIso)}–${londonTime(toIso)}`;
+  const zoned = new Intl.DateTimeFormat('en-GB', {
+    timeZone: LONDON,
+    hour: '2-digit',
+    minute: '2-digit',
+    hour12: false,
+    timeZoneName: 'short',
+  });
+  return `${zoned.format(new Date(fromIso))}–${zoned.format(new Date(toIso))}`;
+}
