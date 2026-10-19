@@ -67,6 +67,7 @@ export function TreePanel(props: { playing?: string }) {
   const [showcase, setShowcase] = createSignal(0);
   const [paused, setPaused] = createSignal(false);
   const [displayed, setDisplayed] = createSignal<string>();
+  const [onScreen, setOnScreen] = createSignal(false);
   let stage: HTMLDivElement | undefined;
   let canvas: HTMLCanvasElement | undefined;
   let reducedMotion = false;
@@ -132,9 +133,9 @@ export function TreePanel(props: { playing?: string }) {
 
   // A single-frame effect never loops, so its turn in the showcase is timed.
   createEffect(
-    () => [displayed(), cycling()] as const,
-    ([name, isCycling]) => {
-      if (!isCycling || effectOf(name)?.frames !== 1) return;
+    () => [displayed(), cycling(), onScreen()] as const,
+    ([name, isCycling, isOnScreen]) => {
+      if (!isCycling || !isOnScreen || effectOf(name)?.frames !== 1) return;
       const timer = setTimeout(() => setShowcase((i) => i + 1), SHOWCASE_DWELL_S * 1000);
       return () => clearTimeout(timer);
     },
@@ -205,16 +206,17 @@ export function TreePanel(props: { playing?: string }) {
       { rootMargin: '200px 0px' },
     );
     nearby.observe(stage);
-    const onScreen = new IntersectionObserver(([entry]) => {
+    const inView = new IntersectionObserver(([entry]) => {
       visible = !!entry?.isIntersecting;
       started?.setVisible(visible);
+      setOnScreen(visible);
     });
-    onScreen.observe(stage);
+    inView.observe(stage);
 
     return () => {
       disposed = true;
       nearby.disconnect();
-      onScreen.disconnect();
+      inView.disconnect();
       motion.removeEventListener('change', onMotion);
       started?.destroy();
     };
