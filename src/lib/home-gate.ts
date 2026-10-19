@@ -39,13 +39,15 @@ function cookieSecret(env: HomeEnv, url: URL): string | undefined {
 }
 
 export interface ResolvedVisitor extends Visitor {
-  /** A Set-Cookie value to send with the response, if any. */
-  cookie?: string;
+  /** Set-Cookie values to send with the response. */
+  cookies: string[];
 }
 
 /**
- * Home is a valid home cookie, re-signed on use once a day old. Where
- * `allowsOverride`, `?as=home` issues one and `?as=outsider` drops it.
+ * Home is a valid home cookie, re-signed on use once a day old, or a pending
+ * enrolment that Home Assistant has since confirmed: any request from the
+ * browser holding it claims it, not only the page that asked. Where
+ * `allowsOverride`, `?as=home` issues a home cookie and `?as=outsider` drops it.
  */
 export async function resolveVisitor(
   request: Request,
@@ -55,18 +57,31 @@ export async function resolveVisitor(
   const url = new URL(request.url);
   const override = allowsOverride(url) ? url.searchParams.get('as') : null;
   const secret = cookieSecret(env, url);
-  if (override === 'outsider') return { home: false, cookie: CLEAR_HOME_COOKIE };
-  if (override === 'home' && secret) {
-    return { home: true, cookie: homeCookieHeader(await signHomeCookie(secret, now)) };
+  if (override === 'outsider') return { home: false, cookies: [CLEAR_HOME_COOKIE] };
+  if (!secret) return { home: false, cookies: [] };
+  if (override === 'home') {
+    return { home: true, cookies: [homeCookieHeader(await signHomeCookie(secret, now))] };
   }
-  const cookie = readCookie(request.headers.get('Cookie'), HOME_COOKIE);
-  if (cookie === undefined || !secret) return { home: false };
-  const { valid, refresh } = await verifyHomeCookie(secret, cookie, now);
-  if (!valid) return { home: false, cookie: CLEAR_HOME_COOKIE };
-  return {
-    home: true,
-    cookie: refresh ? homeCookieHeader(await signHomeCookie(secret, now)) : undefined,
-  };
+  const header = request.headers.get('Cookie');
+  const cookies: string[] = [];
+  const home = readCookie(header, HOME_COOKIE);
+  if (home !== undefined) {
+    const { valid, refresh } = await verifyHomeCookie(secret, home, now);
+    if (valid) {
+      if (refresh) cookies.push(homeCookieHeader(await signHomeCookie(secret, now)));
+      return { home: true, cookies };
+    }
+    cookies.push(CLEAR_HOME_COOKIE);
+  }
+  const pending = readCookie(header, ENROL_COOKIE);
+  if (pending === undefined) return { home: false, cookies };
+  const nonce = await verifyEnrolCookie(secret, pending, now);
+  const state = nonce ? await claimEnrolment(env.DB, nonce, now) : 'expired';
+  if (state === 'pending') return { home: false, cookies };
+  cookies.push(CLEAR_ENROL_COOKIE);
+  if (state !== 'home') return { home: false, cookies };
+  cookies.push(homeCookieHeader(await signHomeCookie(secret, now)));
+  return { home: true, cookies };
 }
 
 function json(body: unknown, status: number, init: HeadersInit = {}) {

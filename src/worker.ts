@@ -70,7 +70,7 @@ export default {
     const response = new Response(upstream.body, upstream);
     response.headers.set('Cache-Control', 'private, no-store');
     response.headers.append('Vary', 'Cookie');
-    if (visitor.cookie) response.headers.append('Set-Cookie', visitor.cookie);
+    for (const cookie of visitor.cookies) response.headers.append('Set-Cookie', cookie);
     return response;
   },
 

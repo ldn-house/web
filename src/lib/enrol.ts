@@ -12,6 +12,8 @@ const MINT_LIMIT = 10;
  */
 const CONFIRM_FAILURE_LIMIT = 20;
 const REDEEM_FAILURE_LIMIT = 10;
+/** How long the browser that claimed a code may claim it again. */
+const RECLAIM_MS = 60_000;
 /** Codes and failures are kept a day for rate limiting, then pruned. */
 const RETAIN_MS = 86_400_000;
 
@@ -113,8 +115,9 @@ export async function confirmEnrolment(
 }
 
 /**
- * The pending browser's view of its code. A confirmed code is consumed here, by
- * the browser it was issued to, and nowhere else.
+ * The pending browser's view of its code. A confirmed code is claimed here, by
+ * the browser it was issued to, and nowhere else. That browser may claim it
+ * again for a minute, so a response lost to a reload does not waste it.
  */
 export async function claimEnrolment(
   db: D1Database,
@@ -124,12 +127,12 @@ export async function claimEnrolment(
   const browser = await sha256(nonce);
   const claimed = await db
     .prepare(
-      `UPDATE enrol_codes SET consumed_at = ?
+      `UPDATE enrol_codes SET consumed_at = coalesce(consumed_at, ?)
       WHERE browser_hash = ? AND kind = 'browser' AND confirmed_at IS NOT NULL
-        AND consumed_at IS NULL AND expires_at > ?
+        AND (consumed_at IS NULL OR consumed_at > ?) AND expires_at > ?
       RETURNING code_hash`,
     )
-    .bind(now, browser, now)
+    .bind(now, browser, now - RECLAIM_MS, now)
     .first();
   if (claimed) return 'home';
   const pending = await count(

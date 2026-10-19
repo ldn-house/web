@@ -132,6 +132,35 @@ describe('enrolment from home', () => {
     expect(await phone.isHome(NOW + 5_000)).toBe(true);
   });
 
+  it('completes on the next page load, if the polling page was reloaded or discarded', async () => {
+    const phone = browser();
+    const code = await codeFrom(await phone.start());
+    // Before confirmation the pending cookie is kept and nothing changes.
+    const page = () =>
+      new Request(`${ORIGIN}/`, {
+        headers: { Cookie: `__Host-ldn-enrol=${phone.jar.get('__Host-ldn-enrol')}` },
+      });
+    expect(await resolveVisitor(page(), homeEnv, NOW)).toEqual({
+      home: false,
+      cookies: [],
+    });
+    expect((await confirm(code)).status).toBe(204);
+    const visitor = await resolveVisitor(page(), homeEnv, NOW + 5_000);
+    expect(visitor).toEqual({
+      home: true,
+      cookies: [
+        expect.stringMatching(/^__Host-ldn-enrol=; Max-Age=0/),
+        expect.stringMatching(/^__Host-ldn-home=v1\./),
+      ],
+    });
+    // If that response is lost, the same browser can claim again for a minute.
+    expect((await resolveVisitor(page(), homeEnv, NOW + 60_000)).home).toBe(true);
+    expect(await resolveVisitor(page(), homeEnv, NOW + 65_001)).toEqual({
+      home: false,
+      cookies: [expect.stringMatching(/^__Host-ldn-enrol=; Max-Age=0/)],
+    });
+  });
+
   it('never stores the code or nonce itself', async () => {
     const phone = browser();
     const code = await codeFrom(await phone.start());
@@ -172,11 +201,15 @@ describe('enrolment from home', () => {
     const pending = phone.jar.get('__Host-ldn-enrol')!;
     expect(await stateOf(await phone.status())).toBe('home');
     expect(phone.jar.has('__Host-ldn-enrol')).toBe(false);
-    // Replaying the spent pending cookie, here or elsewhere, claims nothing more.
+    // The pending cookie stands for that browser for a minute after the claim,
+    // so a lost response can be retried; after that a replay claims nothing.
     const replay = browser('203.0.113.9');
     replay.jar.set('__Host-ldn-enrol', pending);
-    expect(await stateOf(await replay.status())).toBe('expired');
-    expect(await replay.isHome()).toBe(false);
+    expect(await stateOf(await replay.status(NOW + 59_999))).toBe('home');
+    const late = browser('203.0.113.10');
+    late.jar.set('__Host-ldn-enrol', pending);
+    expect(await stateOf(await late.status(NOW + 60_000))).toBe('expired');
+    expect(await late.isHome(NOW + 60_000)).toBe(false);
   });
 
   it('refuses a code confirmed, or claimed, after it expires', async () => {
@@ -359,21 +392,26 @@ describe('home cookie', () => {
     const fresh = await signHomeCookie(SECRET, NOW);
     expect(await resolveVisitor(page(fresh), homeEnv, NOW + 60_000)).toEqual({
       home: true,
-      cookie: undefined,
+      cookies: [],
     });
     const day = await resolveVisitor(page(fresh), homeEnv, NOW + 86_400_000);
-    expect(day.home).toBe(true);
-    expect(day.cookie).toMatch(/^__Host-ldn-home=v1\./);
+    expect(day).toEqual({
+      home: true,
+      cookies: [expect.stringMatching(/^__Host-ldn-home=v1\./)],
+    });
     const rotated = await resolveVisitor(
       page(fresh),
       { ...homeEnv, HOME_COOKIE_SECRET: 'rotated' },
       NOW,
     );
-    expect(rotated).toEqual({ home: false, cookie: expect.stringMatching(/Max-Age=0/) });
+    expect(rotated).toEqual({
+      home: false,
+      cookies: [expect.stringMatching(/^__Host-ldn-home=; Max-Age=0/)],
+    });
   });
 
   it('cannot be simulated on a production host', async () => {
     const visitor = await resolveVisitor(new Request(`${ORIGIN}/?as=home`), homeEnv, NOW);
-    expect(visitor).toEqual({ home: false });
+    expect(visitor).toEqual({ home: false, cookies: [] });
   });
 });
