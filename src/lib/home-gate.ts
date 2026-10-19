@@ -131,15 +131,6 @@ function webhookUrl(env: HomeEnv, code: string, check = ''): string | null {
   }
 }
 
-/**
- * Four digits the page shows and Home Assistant's approval request repeats, so
- * whoever approves can match it to the device in front of them. Anyone could
- * relay another browser's webhook URL, so approval is what binds the two.
- */
-function checkDigits(): string {
-  return String(crypto.getRandomValues(new Uint32Array(1))[0]! % 10_000).padStart(4, '0');
-}
-
 /** `POST /api/enrol/start`: a code for Home Assistant, bound to this browser. */
 export async function startBrowserEnrolment(
   request: Request,
@@ -154,8 +145,8 @@ export async function startBrowserEnrolment(
   const client = await clientHash(secret, request.headers.get('CF-Connecting-IP'));
   const started = await startEnrolment(env.DB, client, now);
   if (isLimited(started)) return tooMany(started);
-  const check = checkDigits();
-  return json({ confirmUrl: webhookUrl(env, started.code, check), check }, 201, {
+  const { code, check } = started;
+  return json({ confirmUrl: webhookUrl(env, code, check), check }, 201, {
     'Set-Cookie': enrolCookieHeader(await signEnrolCookie(secret, started.nonce, now)),
   });
 }
@@ -185,7 +176,7 @@ export async function browserEnrolmentStatus(
   return json({ state }, 200, headers);
 }
 
-/** `POST /api/home/confirm` from Home Assistant's local-only webhook. */
+/** `POST /api/home/confirm` from Home Assistant's local-only webhook, after approval. */
 export async function confirmBrowserEnrolment(
   request: Request,
   env: HomeEnv,
@@ -193,8 +184,11 @@ export async function confirmBrowserEnrolment(
 ): Promise<Response> {
   const denied = await homeAssistant(request, env);
   if (denied) return denied;
-  const body = (await request.json().catch(() => null)) as { code?: unknown } | null;
-  const confirmed = await confirmEnrolment(env.DB, body?.code, now);
+  const body = (await request.json().catch(() => null)) as {
+    code?: unknown;
+    check?: unknown;
+  } | null;
+  const confirmed = await confirmEnrolment(env.DB, body?.code, body?.check, now);
   if (isLimited(confirmed)) return tooMany(confirmed);
   return confirmed
     ? new Response(null, { status: 204 })

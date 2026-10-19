@@ -261,30 +261,32 @@ describe('home gate', () => {
         body: init.body,
         headers: { Origin: 'https://ldn.house', ...init.headers },
       });
-    const confirm = (code: string, token = HA_TOKEN) =>
+    const confirm = (code: string, check: string, token = HA_TOKEN) =>
       post('/api/home/confirm', {
         headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
-        body: JSON.stringify({ code }),
+        body: JSON.stringify({ code, check }),
       });
 
     it('turns an outsider into a home visitor once Home Assistant confirms', async () => {
       const started = await post('/api/enrol/start');
       expect(started.response.status).toBe(201);
       let cookie = cookiesFrom(started.response);
-      const code = new URL(JSON.parse(started.body).confirmUrl).searchParams.get('code')!;
+      const confirmUrl = new URL(JSON.parse(started.body).confirmUrl);
+      const code = confirmUrl.searchParams.get('code')!;
+      const check = confirmUrl.searchParams.get('check')!;
 
       expect(JSON.parse((await post('/api/enrol/status', { cookie })).body)).toEqual({
         state: 'pending',
       });
-      expect((await confirm(code, 'wrong')).response.status).toBe(401);
-      expect((await confirm(code)).response.status).toBe(204);
+      expect((await confirm(code, check, 'wrong')).response.status).toBe(401);
+      expect((await confirm(code, check)).response.status).toBe(204);
 
       const claimed = await post('/api/enrol/status', { cookie });
       expect(JSON.parse(claimed.body)).toEqual({ state: 'home' });
       cookie = cookiesFrom(claimed.response, cookie);
       expect(cookie).toMatch(/^__Host-ldn-home=v1\./);
       expect((await call('/', { cookie })).body).toContain('spent today');
-      expect((await confirm(code)).response.status).toBe(404);
+      expect((await confirm(code, check)).response.status).toBe(404);
     });
 
     it('enrols by link without JavaScript', async () => {

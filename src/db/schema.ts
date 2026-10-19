@@ -102,6 +102,8 @@ export const enrolCodes = sqliteTable(
     codeHash: text('code_hash').primaryKey(),
     kind: text('kind', { enum: ['browser', 'link'] }).notNull(),
     browserHash: text('browser_hash'),
+    /** Shown on the enrolling page; Home Assistant's approval must repeat them. */
+    checkDigits: text('check_digits'),
     clientHash: text('client_hash'),
     createdAt: integer('created_at').notNull(),
     expiresAt: integer('expires_at').notNull(),

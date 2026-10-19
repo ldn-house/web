@@ -73,9 +73,15 @@ function browser(ip = '198.51.100.7') {
   };
 }
 
+/** The digits each code was issued with, as Home Assistant would pass them back. */
+const checks = new Map<string, string>();
+
 const codeFrom = async (response: Response) => {
   const { confirmUrl } = (await response.json()) as { confirmUrl: string };
-  return new URL(confirmUrl).searchParams.get('code')!;
+  const url = new URL(confirmUrl);
+  const code = url.searchParams.get('code')!;
+  checks.set(code, url.searchParams.get('check')!);
+  return code;
 };
 
 function homeAssistant(path: string, body?: unknown, token: string | null = TOKEN) {
@@ -88,9 +94,14 @@ function homeAssistant(path: string, body?: unknown, token: string | null = TOKE
   });
 }
 
-const confirm = (code: string, now = NOW, token: string | null = TOKEN) =>
+const confirm = (
+  code: string,
+  now = NOW,
+  token: string | null = TOKEN,
+  check = checks.get(code),
+) =>
   confirmBrowserEnrolment(
-    homeAssistant('/api/home/confirm', { code }, token),
+    homeAssistant('/api/home/confirm', { code, check }, token),
     homeEnv,
     now,
   );
@@ -163,6 +174,27 @@ describe('enrolment from home', () => {
       home: false,
       cookies: [expect.stringMatching(/^__Host-ldn-enrol=; Max-Age=0/)],
     });
+  });
+
+  it('confirms only with the check digits shown to the browser', async () => {
+    const phone = browser();
+    const code = await codeFrom(await phone.start());
+    const attacker = browser('203.0.113.9');
+    const attackerCode = await codeFrom(await attacker.start());
+    const wrong = checks.get(code) === '0000' ? '0001' : '0000';
+    for (const check of [null, '', '12345', 'abcd', wrong]) {
+      expect((await confirm(code, NOW, TOKEN, check as string)).status).toBe(404);
+    }
+    // A substituted code carrying the victim's digits, as a tampered LAN request might.
+    if (checks.get(attackerCode) !== checks.get(code)) {
+      expect((await confirm(attackerCode, NOW, TOKEN, checks.get(code))).status).toBe(
+        404,
+      );
+      expect(await stateOf(await attacker.status())).toBe('pending');
+    }
+    // None of those spent the real code.
+    expect((await confirm(code)).status).toBe(204);
+    expect(await stateOf(await phone.status())).toBe('home');
   });
 
   it('never stores the code or nonce itself', async () => {
@@ -250,7 +282,7 @@ describe('enrolment from home', () => {
       expect((await confirm(code, NOW, token)).status).toBe(401);
     }
     const unconfigured = await confirmBrowserEnrolment(
-      homeAssistant('/api/home/confirm', { code }),
+      homeAssistant('/api/home/confirm', { code, check: checks.get(code) }),
       { ...homeEnv, HOME_ASSISTANT_TOKEN: undefined },
       NOW,
     );
