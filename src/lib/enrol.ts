@@ -70,26 +70,33 @@ export async function startEnrolment(
     db.prepare('DELETE FROM enrol_codes WHERE created_at < ?').bind(now - RETAIN_MS),
     db.prepare('DELETE FROM enrol_failures WHERE at < ?').bind(now - RETAIN_MS),
   ]);
-  const since = now - WINDOW_MS;
-  const recent =
-    "SELECT count(*) AS n FROM enrol_codes WHERE kind = 'browser' AND created_at > ?";
-  if (
-    (await count(db, `${recent} AND client_hash = ?`, since, client)) >=
-      START_LIMIT_PER_CLIENT ||
-    (await count(db, recent, since)) >= START_LIMIT
-  ) {
-    return limited();
-  }
   const code = randomToken();
   const nonce = randomToken();
-  await db
+  // One statement, so concurrent requests cannot all pass the quota check.
+  const inserted = await db
     .prepare(
       `INSERT INTO enrol_codes (code_hash, kind, browser_hash, client_hash, created_at, expires_at)
-      VALUES (?, 'browser', ?, ?, ?, ?)`,
+      SELECT ?, 'browser', ?, ?, ?, ?
+      WHERE (SELECT count(*) FROM enrol_codes
+          WHERE kind = 'browser' AND created_at > ? AND client_hash = ?) < ?
+        AND (SELECT count(*) FROM enrol_codes
+          WHERE kind = 'browser' AND created_at > ?) < ?
+      RETURNING code_hash`,
     )
-    .bind(await sha256(code), await sha256(nonce), client, now, now + ENROL_TTL_S * 1000)
-    .run();
-  return { code, nonce };
+    .bind(
+      await sha256(code),
+      await sha256(nonce),
+      client,
+      now,
+      now + ENROL_TTL_S * 1000,
+      now - WINDOW_MS,
+      client,
+      START_LIMIT_PER_CLIENT,
+      now - WINDOW_MS,
+      START_LIMIT,
+    )
+    .first();
+  return inserted ? { code, nonce } : limited();
 }
 
 /** Home Assistant vouches for a browser code. True only the first time, before expiry. */
@@ -150,22 +157,19 @@ export async function mintEnrolLink(
   db: D1Database,
   now: number,
 ): Promise<{ code: string; expiresAt: number } | Limited> {
-  const minted = await count(
-    db,
-    "SELECT count(*) AS n FROM enrol_codes WHERE kind = 'link' AND created_at > ?",
-    now - WINDOW_MS,
-  );
-  if (minted >= MINT_LIMIT) return limited();
   const code = randomToken();
   const expiresAt = now + ENROL_TTL_S * 1000;
-  await db
+  const inserted = await db
     .prepare(
       `INSERT INTO enrol_codes (code_hash, kind, created_at, expires_at)
-      VALUES (?, 'link', ?, ?)`,
+      SELECT ?, 'link', ?, ?
+      WHERE (SELECT count(*) FROM enrol_codes
+        WHERE kind = 'link' AND created_at > ?) < ?
+      RETURNING code_hash`,
     )
-    .bind(await sha256(code), now, expiresAt)
-    .run();
-  return { code, expiresAt };
+    .bind(await sha256(code), now, expiresAt, now - WINDOW_MS, MINT_LIMIT)
+    .first();
+  return inserted ? { code, expiresAt } : limited();
 }
 
 export async function redeemEnrolLink(

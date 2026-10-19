@@ -110,10 +110,14 @@ describe('enrolment from home', () => {
     const phone = browser();
     const started = await phone.start();
     expect(started.status).toBe(201);
-    const confirmUrl = new URL(
-      ((await started.clone().json()) as { confirmUrl: string }).confirmUrl,
-    );
+    const { confirmUrl: url, check } = (await started.clone().json()) as {
+      confirmUrl: string;
+      check: string;
+    };
+    const confirmUrl = new URL(url);
     expect(`${confirmUrl.origin}${confirmUrl.pathname}`).toBe(WEBHOOK);
+    expect(check).toMatch(/^\d{4}$/);
+    expect(confirmUrl.searchParams.get('check')).toBe(check);
     expect(started.headers.get('Set-Cookie')).toMatch(
       /^__Host-ldn-enrol=v1\.[\w-]{22}\.\d+\.[\w-]{43}; Max-Age=600; Path=\/; HttpOnly; Secure; SameSite=Lax$/,
     );
@@ -281,6 +285,17 @@ describe('enrolment from home', () => {
     }
   });
 
+  it('holds the quotas under concurrent requests', async () => {
+    const phone = browser();
+    const statuses = await Promise.all(
+      Array.from({ length: 20 }, () => phone.start().then((r) => r.status)),
+    );
+    expect(statuses.filter((status) => status === 201)).toHaveLength(5);
+    expect(statuses.filter((status) => status === 429)).toHaveLength(15);
+    // Others are still served.
+    expect((await browser('203.0.113.9').start()).status).toBe(201);
+  });
+
   it('rate-limits code requests per client and failed confirmations overall', async () => {
     const phone = browser();
     for (let i = 0; i < 5; i += 1) expect((await phone.start()).status).toBe(201);
@@ -379,9 +394,17 @@ describe('enrolment by link', () => {
     expect((await browser('203.0.113.13').page('POST', code)).status).toBe(303);
   });
 
-  it('caps how many links Home Assistant can mint', async () => {
-    for (let i = 0; i < 10; i += 1) expect((await mint()).status).toBe(201);
+  it('caps how many links Home Assistant can mint, even concurrently', async () => {
+    const statuses = await Promise.all(
+      Array.from({ length: 25 }, () => mint().then((r) => r.status)),
+    );
+    expect(statuses.filter((status) => status === 201)).toHaveLength(10);
     expect((await mint()).status).toBe(429);
+  });
+
+  it('lets the form send its origin without leaking the code', async () => {
+    const page = await browser().page('GET', 'A'.repeat(22));
+    expect(page.headers.get('Referrer-Policy')).toBe('strict-origin');
   });
 });
 

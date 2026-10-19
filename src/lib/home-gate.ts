@@ -119,15 +119,25 @@ async function homeAssistant(request: Request, env: HomeEnv): Promise<Response |
   return null;
 }
 
-function webhookUrl(env: HomeEnv, code: string): string | null {
+function webhookUrl(env: HomeEnv, code: string, check = ''): string | null {
   try {
     const url = new URL(env.HOME_ASSISTANT_WEBHOOK_URL ?? '');
     if (url.protocol !== 'http:' && url.protocol !== 'https:') return null;
     url.searchParams.set('code', code);
+    url.searchParams.set('check', check);
     return url.toString();
   } catch {
     return null;
   }
+}
+
+/**
+ * Four digits the page shows and Home Assistant's approval request repeats, so
+ * whoever approves can match it to the device in front of them. Anyone could
+ * relay another browser's webhook URL, so approval is what binds the two.
+ */
+function checkDigits(): string {
+  return String(crypto.getRandomValues(new Uint32Array(1))[0]! % 10_000).padStart(4, '0');
 }
 
 /** `POST /api/enrol/start`: a code for Home Assistant, bound to this browser. */
@@ -144,7 +154,8 @@ export async function startBrowserEnrolment(
   const client = await clientHash(secret, request.headers.get('CF-Connecting-IP'));
   const started = await startEnrolment(env.DB, client, now);
   if (isLimited(started)) return tooMany(started);
-  return json({ confirmUrl: webhookUrl(env, started.code) }, 201, {
+  const check = checkDigits();
+  return json({ confirmUrl: webhookUrl(env, started.code, check), check }, 201, {
     'Set-Cookie': enrolCookieHeader(await signEnrolCookie(secret, started.nonce, now)),
   });
 }
@@ -230,7 +241,7 @@ border-radius:.5rem;padding:.6rem 1rem;text-decoration:none;cursor:pointer}</sty
       headers: {
         'Content-Type': 'text/html; charset=utf-8',
         'Cache-Control': 'no-store',
-        'Referrer-Policy': 'no-referrer',
+        'Referrer-Policy': 'strict-origin',
         'X-Robots-Tag': 'noindex',
         ...headers,
       },

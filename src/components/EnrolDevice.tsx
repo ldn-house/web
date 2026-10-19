@@ -3,7 +3,7 @@ import { createSignal, Match, onCleanup, Switch } from 'solid-js';
 type State =
   | { name: 'idle' }
   | { name: 'starting' }
-  | { name: 'waiting'; confirmUrl: string; reached: boolean | null }
+  | { name: 'waiting'; confirmUrl: string; check: string; reached: boolean | null }
   | { name: 'expired' }
   | { name: 'unavailable' }
   | { name: 'failed'; message: string };
@@ -33,7 +33,7 @@ export function EnrolDevice() {
   };
   onCleanup(stopPolling);
 
-  async function check() {
+  async function recheck() {
     if (state().name !== 'waiting' || document.visibilityState === 'hidden') return;
     const response = await fetch('/api/enrol/status', { method: 'POST' }).catch(
       () => null,
@@ -53,7 +53,7 @@ export function EnrolDevice() {
   function poll() {
     clearTimeout(pollTimer);
     pollTimer = setTimeout(async () => {
-      await check();
+      await recheck();
       if (state().name === 'waiting') poll();
     }, POLL_MS);
   }
@@ -71,16 +71,19 @@ export function EnrolDevice() {
           response?.status === 429 ? 'Too many attempts.' : 'Could not start enrolment.',
       });
     }
-    const { confirmUrl } = (await response.json()) as { confirmUrl: string };
-    setState({ name: 'waiting', confirmUrl, reached: null });
+    const { confirmUrl, check } = (await response.json()) as {
+      confirmUrl: string;
+      check: string;
+    };
+    setState({ name: 'waiting', confirmUrl, check, reached: null });
     pollUntil = Date.now() + POLL_FOR_MS;
     // Returning from Home Assistant's tab checks straight away.
     stopPolling();
-    window.addEventListener('focus', check);
-    document.addEventListener('visibilitychange', check);
+    window.addEventListener('focus', recheck);
+    document.addEventListener('visibilitychange', recheck);
     unlisten = () => {
-      window.removeEventListener('focus', check);
-      document.removeEventListener('visibilitychange', check);
+      window.removeEventListener('focus', recheck);
+      document.removeEventListener('visibilitychange', recheck);
     };
     poll();
     try {
@@ -128,15 +131,19 @@ export function EnrolDevice() {
           <>
             {waiting().reached === false
               ? 'On the home Wi-Fi, '
-              : 'Waiting for Home Assistant. If nothing happens, on the home Wi-Fi, '}
+              : 'Asked Home Assistant. If nothing happens, on the home Wi-Fi, '}
             <a
               href={waiting().confirmUrl}
               target="_blank"
               rel="noopener noreferrer"
               class={quiet}
             >
-              confirm with Home Assistant
+              ask Home Assistant
             </a>
+            . Approve it there only if it shows{' '}
+            <strong class="font-medium text-neutral-300 tabular-nums">
+              {waiting().check}
+            </strong>
             , then come back here.
           </>
         )}
