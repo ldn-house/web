@@ -19,10 +19,11 @@ cannot resolve `cloudflare:test`.
 
 ## Deployment
 
-Home Mini readings refresh on demand at most every two minutes. D1 shares the
-reading and the next fetch time across visitors and Worker instances, including
-cooldowns when Octopus throttles requests. The power label shows the measurement
-time; readings older than five minutes give way to the hourly average.
+Home Mini readings refresh on demand at most every two minutes, and only a home
+visitor's request can trigger one. D1 shares the reading and the next fetch time
+across visitors and Worker instances, including cooldowns when Octopus throttles
+requests. The power label shows the measurement time; readings older than five
+minutes give way to the hourly average.
 
 Each refresh uses two telemetry queries, so one deployment makes at most 60 per
 hour. Local servers and other integrations using the same Octopus account share
@@ -62,6 +63,34 @@ additive — a destructive change needs expand/contract across two deploys.
 
 Repository secrets: `CLOUDFLARE_ACCOUNT_ID`, and a `CLOUDFLARE_API_TOKEN` with
 Workers Scripts edit, D1 edit and Workers Routes edit.
+
+## Home access
+
+Live and same-day usage is shown only to visitors at home: from the house's
+public address, or with the cookie a visit from there sets. Everyone else sees
+usage to the end of yesterday.
+
+Worker secrets:
+
+```bash
+bunx wrangler secret put HOME_REPORT_TOKEN  # Home Assistant's bearer token
+bunx wrangler secret put HOME_COOKIE_SECRET # signs home cookies; rotate to revoke them
+```
+
+Home Assistant reports the address on change and every five minutes; an address
+unreported for 15 minutes stops counting:
+
+```http
+POST /api/home/address
+Authorization: Bearer <HOME_REPORT_TOKEN>
+Content-Type: application/json
+
+{"ipv4": "192.0.2.10", "ipv6_prefix": "2001:db8:1200::/56"}
+```
+
+`ipv6_prefix` is optional, /48 to /128. Locally and on PR previews, `?as=home`,
+`?as=away` and `?as=outsider` simulate the house, a cookie-holder away from it,
+and a stranger.
 
 ## Maintenance
 

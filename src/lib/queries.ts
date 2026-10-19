@@ -6,6 +6,8 @@ import { drizzle } from 'drizzle-orm/d1';
 import * as schema from '../db/schema';
 import { HALF_HOUR_MS, type MeterSlot, type Slot } from './consumption';
 import type { UsageRate } from './cost';
+import { londonMidnight } from './format';
+import { isHome } from './visitor';
 
 export type { Slot } from './consumption';
 
@@ -17,6 +19,21 @@ export interface RateSlot {
 const db = () => drizzle(env.DB, { schema });
 
 /**
+ * Away from home, usage ends at the London midnight that began today, whatever
+ * the caller asks for: these are server functions, callable with any arguments.
+ */
+function visibleTo(to: string): string {
+  if (isHome()) return to;
+  const midnight = londonMidnight(new Date().toISOString());
+  return Date.parse(to) < Date.parse(midnight) ? to : midnight;
+}
+
+/** Decides what the page offers; the data itself is gated by each query. */
+export async function homeVisitor(): Promise<boolean> {
+  return isHome();
+}
+
+/**
  * Octopus's Flexible product is the price-capped variable tariff. It cannot be
  * read off `agreements` because the account has since moved to Agile.
  */
@@ -24,6 +41,7 @@ const CAP_TARIFF = 'E-1R-VAR-22-11-01-C';
 const CAP_PAYMENT_METHOD = 'DIRECT_DEBIT';
 
 export async function consumptionBetween(from: string, to: string): Promise<Slot[]> {
+  to = visibleTo(to);
   return db()
     .select({ start: schema.consumption.intervalStart, kwh: schema.consumption.kwh })
     .from(schema.consumption)
@@ -172,6 +190,8 @@ export async function telemetryBetween(
   to: string,
   now = Date.now(),
 ): Promise<MeterSlot[]> {
+  if (!isHome()) now = Date.now();
+  to = visibleTo(to);
   const rows = await db()
     .select({ readAt: schema.telemetry.readAt, wh: schema.telemetry.consumptionWh })
     .from(schema.telemetry)
@@ -195,6 +215,7 @@ export async function telemetryBetween(
 export async function recentAverageDemand(
   now = Date.now(),
 ): Promise<{ through: string; watts: number } | null> {
+  if (!isHome()) return null;
   const rows = await db()
     .select({ readAt: schema.telemetry.readAt, watts: schema.telemetry.demandW })
     .from(schema.telemetry)

@@ -1,14 +1,17 @@
 import { env } from 'cloudflare:test';
 import { beforeEach, describe, expect, it } from 'vitest';
 import { costForSlot } from './cost';
+import { addLondonDays, londonMidnight } from './format';
 import {
   consumptionBetween,
+  homeVisitor,
   ratesBetween,
   recentAverageDemand,
   standingChargeAt,
   telemetryBetween,
   usageRatesBetween,
 } from './queries';
+import { withVisitor } from './visitor';
 
 const AGILE = 'E-1R-AGILE-24-10-01-C';
 const FLEXIBLE = 'E-1R-VAR-22-11-01-C';
@@ -21,6 +24,7 @@ async function seed(sql: string, ...binds: unknown[]) {
 }
 
 const iso = (ms: number) => new Date(ms).toISOString().replace(/\.\d{3}Z$/, 'Z');
+const asHome = <T>(run: () => Promise<T>) => withVisitor({ home: true }, run);
 
 describe('queries', () => {
   beforeEach(async () => {
@@ -177,10 +181,12 @@ describe('queries', () => {
       );
     }
     // Null legacy data is omitted; the unfinished period is supplied by the live feed.
-    const slots = await telemetryBetween(
-      '2026-01-06T00:00:00Z',
-      '2026-01-07T00:00:00Z',
-      t0 + 3 * 1800_000 + 60_000,
+    const slots = await asHome(() =>
+      telemetryBetween(
+        '2026-01-06T00:00:00Z',
+        '2026-01-07T00:00:00Z',
+        t0 + 3 * 1800_000 + 60_000,
+      ),
     );
     expect(slots).toEqual([
       { start: '2026-01-06T00:00:00Z', kwh: 0.25, through: '2026-01-06T00:30:00.000Z' },
@@ -201,15 +207,19 @@ describe('queries', () => {
         1000,
       );
     }
-    expect(await recentAverageDemand(Date.parse(readAt) + 40 * 60_000)).toEqual({
+    expect(
+      await asHome(() => recentAverageDemand(Date.parse(readAt) + 40 * 60_000)),
+    ).toEqual({
       through: '2026-01-06T00:30:00Z',
       watts: 600,
     });
-    expect(await recentAverageDemand(Date.parse(readAt) + 90 * 60_000)).toBeNull();
+    expect(
+      await asHome(() => recentAverageDemand(Date.parse(readAt) + 90 * 60_000)),
+    ).toBeNull();
   });
 
   it('returns no demand when there is no telemetry', async () => {
-    expect(await recentAverageDemand()).toBeNull();
+    expect(await asHome(() => recentAverageDemand())).toBeNull();
   });
 
   it('reads the standing charge of the tariff in force, preferring Direct Debit', async () => {
@@ -243,5 +253,61 @@ describe('queries', () => {
     expect(await standingChargeAt('2026-01-15T00:00:00Z')).toBe(40);
     expect(await standingChargeAt('2026-03-01T00:00:00Z')).toBe(45);
     expect(await standingChargeAt('2024-06-01T00:00:00Z')).toBeNull();
+  });
+
+  describe('away from home', () => {
+    const FAR = Date.parse(FAR_FUTURE);
+    const today = londonMidnight(new Date().toISOString());
+    const yesterday = addLondonDays(today, -1);
+
+    beforeEach(async () => {
+      for (const [start, kwh] of [
+        [Date.parse(today) - 1800_000, 0.4],
+        [Date.parse(today), 0.7],
+      ] as const) {
+        await seed(
+          'INSERT INTO consumption (interval_start, interval_end, kwh, meter_serial) VALUES (?,?,?,?)',
+          iso(start),
+          iso(start + 1800_000),
+          kwh,
+          'SYNTH00000001',
+        );
+        await seed(
+          'INSERT INTO telemetry (read_at, demand_w, register_wh, consumption_wh) VALUES (?,?,?,?)',
+          iso(start),
+          900,
+          1000,
+          kwh * 1000,
+        );
+      }
+    });
+
+    it('stops usage at the start of today, whatever the arguments', async () => {
+      await withVisitor({ home: false }, async () => {
+        expect(await homeVisitor()).toBe(false);
+        const billed = await consumptionBetween(yesterday, FAR_FUTURE);
+        expect(billed.map((slot) => slot.kwh)).toEqual([0.4]);
+        // A caller-supplied clock cannot pull today's periods in either.
+        const meter = await telemetryBetween(yesterday, FAR_FUTURE, FAR);
+        expect(meter.map((slot) => slot.kwh)).toEqual([0.4]);
+        expect(await recentAverageDemand(FAR)).toBeNull();
+        expect(await recentAverageDemand(Date.parse(today) + 10 * 60_000)).toBeNull();
+        // An invalid bound fails closed rather than lifting the cut-off.
+        expect(await consumptionBetween(yesterday, 'not a date')).toHaveLength(1);
+      });
+    });
+
+    it('treats calls outside any request, such as the scheduled ingest, as away', async () => {
+      expect(await homeVisitor()).toBe(false);
+      expect(await consumptionBetween(today, FAR_FUTURE)).toEqual([]);
+    });
+
+    it('returns today to home visitors', async () => {
+      await asHome(async () => {
+        expect(await homeVisitor()).toBe(true);
+        const billed = await consumptionBetween(yesterday, FAR_FUTURE);
+        expect(billed.map((slot) => slot.kwh)).toEqual([0.4, 0.7]);
+      });
+    });
   });
 });

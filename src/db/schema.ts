@@ -90,3 +90,11 @@ export const livePowerCache = sqliteTable('live_power_cache', {
   nextFetchAt: integer('next_fetch_at').notNull(),
   leaseToken: text('lease_token'),
 });
+
+/** The house's public address as last reported by Home Assistant; one row, id 1. */
+export const homeAddress = sqliteTable('home_address', {
+  id: integer('id').primaryKey(),
+  ipv4: text('ipv4').notNull(),
+  ipv6Prefix: text('ipv6_prefix'),
+  reportedAt: integer('reported_at').notNull(),
+});
