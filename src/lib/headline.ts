@@ -17,18 +17,25 @@ export interface Spend {
   unpriced: number;
 }
 
-/** Energy cost with VAT for readings from `from`; standing charges are not included. */
+/**
+ * Energy cost with VAT for readings from `from`, and before `until` if given;
+ * standing charges are not included. With `until`, a period missing anywhere
+ * in the range counts, not just one before the latest reading.
+ */
 export function spendSince(
   from: string,
   slots: readonly MeterSlot[],
   rates: readonly UsageRate[],
+  until?: string,
 ): Spend {
   const since = Date.parse(from);
+  const end = until === undefined ? Infinity : Date.parse(until);
   const spend: Spend = { gbp: 0, kwh: 0, through: null, missing: 0, unpriced: 0 };
   let read = 0;
   let latest = since;
   for (const slot of slots) {
-    if (Date.parse(slot.start) < since) continue;
+    const start = Date.parse(slot.start);
+    if (start < since || start >= end) continue;
     read += 1;
     spend.kwh += slot.kwh;
     const cost = costForSlot(slot, rates);
@@ -38,7 +45,8 @@ export function spendSince(
   }
   if (read === 0) return spend;
   spend.through = new Date(latest).toISOString();
-  spend.missing = Math.max(Math.ceil((latest - since) / HALF_HOUR_MS) - read, 0);
+  const span = (until === undefined ? latest : end) - since;
+  spend.missing = Math.max(Math.ceil(span / HALF_HOUR_MS) - read, 0);
   return spend;
 }
 

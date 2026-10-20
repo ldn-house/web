@@ -1,5 +1,6 @@
 import type { JSX } from '@solidjs/web';
 import { createEffect, createMemo, createSignal, For, onSettled, Show } from 'solid-js';
+import { EnrolDevice } from './components/EnrolDevice';
 import { RateChart } from './components/RateChart';
 import type { Window as ChartWindow } from './components/TimeAxis';
 import { UsageChart } from './components/UsageChart';
@@ -28,6 +29,7 @@ import {
 import {
   cappedRate,
   consumptionBetween,
+  homeVisitor,
   ratesBetween,
   recentAverageDemand,
   standingChargeAt,
@@ -90,6 +92,10 @@ export default function App() {
       : document.querySelector('main')?.dataset.renderedAt) ?? new Date().toISOString();
   const [now, setNow] = createSignal(renderedAt);
   const today = createMemo(() => londonMidnight(now()));
+  const yesterday = createMemo(() => addLondonDays(today(), -1));
+  // Away from home the server stops usage at the end of yesterday and refuses
+  // live readings; this only shapes what the page offers around that.
+  const home = createMemo(async () => homeVisitor());
   const period = createMemo(() => Math.floor(Date.parse(now()) / HALF_HOUR_MS));
   const queryWindow = createMemo(() => ({
     from: addLondonDays(today(), -1),
@@ -167,7 +173,7 @@ export default function App() {
       // The chart clock still advances while network polling is in a cooldown.
       const now = Date.now();
       setNow(new Date(now).toISOString());
-      if (polling || now < nextPollAt) return;
+      if (!home() || polling || now < nextPollAt) return;
       polling = true;
       nextPollAt = now + LIVE_REFRESH_MS;
       const request = new AbortController();
@@ -186,6 +192,12 @@ export default function App() {
             5_000,
             retryAfterMs(response.headers.get('Retry-After')) ?? LIVE_REFRESH_MS,
           );
+        // This deployment has no live feed, so there is nothing to poll for.
+        if (response.status === 204) {
+          nextPollAt = Infinity;
+          clearLiveDemand();
+          return;
+        }
         if (!response.ok) {
           clearLiveDemand();
           return;
@@ -288,16 +300,25 @@ export default function App() {
     { defer: true },
   );
 
-  const spend = createMemo(() => spendSince(today(), usage(), usageRates()));
+  const spend = createMemo(() =>
+    home()
+      ? spendSince(today(), usage(), usageRates())
+      : spendSince(yesterday(), usage(), usageRates(), today()),
+  );
   const spendDetail = () => {
     const { through, kwh, missing, unpriced } = spend();
     const halfHours = (count: number) =>
       count === 1 ? '1 half-hour has' : `${count} half-hours have`;
     const pence = standingCharge();
+    const priced = "priced at each half-hour's Agile rate with VAT.";
     return [
-      through
-        ? `${kwh.toFixed(2)} kWh to ${londonTime(through)}, priced at each half-hour's Agile rate with VAT.`
-        : 'No readings yet today.',
+      !through
+        ? home()
+          ? 'No readings yet today.'
+          : 'No readings yesterday.'
+        : home()
+          ? `${kwh.toFixed(2)} kWh to ${londonTime(through)}, ${priced}`
+          : `${kwh.toFixed(2)} kWh, ${priced}`,
       missing ? `${halfHours(missing)} no reading.` : '',
       unpriced
         ? `${halfHours(unpriced)} no price and ${unpriced === 1 ? 'is' : 'are'} left out.`
@@ -361,7 +382,7 @@ export default function App() {
       >
         <Figure
           value={spend().through ? pounds(spend().gbp) : '£0.00'}
-          label="spent today"
+          label={home() ? 'spent today' : 'spent yesterday'}
           detail={spendDetail()}
         />
         <div class="mt-4">
@@ -375,6 +396,11 @@ export default function App() {
               window={chartWindow()}
               live={!!liveDemand()}
             />
+          </Show>
+          <Show when={!home()}>
+            <p class="mt-3 text-xs text-neutral-500">
+              Usage is shown to the end of yesterday. <EnrolDevice />
+            </p>
           </Show>
         </div>
       </Panel>

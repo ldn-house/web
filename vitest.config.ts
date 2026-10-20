@@ -1,4 +1,5 @@
 import { cloudflareTest, readD1Migrations } from '@cloudflare/vitest-plugin';
+import solid from '@solidjs/vite-plugin';
 import { defineConfig } from 'vitest/config';
 
 const migrations = await readD1Migrations('./drizzle');
@@ -22,5 +23,28 @@ export default defineConfig({
   ],
   test: {
     setupFiles: ['./src/test/apply-migrations.ts'],
+    projects: [
+      {
+        extends: true,
+        test: {
+          name: 'unit',
+          exclude: ['**/node_modules/**', '.scratch/**', 'src/**/*.ssr.test.ts'],
+        },
+      },
+      {
+        // Renders the real Worker entry, so tests can assert on the HTML it
+        // serves. Server functions here only run inside a request.
+        extends: true,
+        plugins: [
+          solid({
+            start: { external: true },
+            ssr: true,
+            serverFunctions: { devMiddleware: false },
+          }),
+        ],
+        // `node` selects Solid's server build; the Workers pool supplies the runtime.
+        test: { name: 'ssr', include: ['src/**/*.ssr.test.ts'], environment: 'node' },
+      },
+    ],
   },
 });

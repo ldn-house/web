@@ -1,0 +1,1 @@
+ALTER TABLE `enrol_codes` ADD `check_digits` text;

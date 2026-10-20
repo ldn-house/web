@@ -90,3 +90,40 @@ export const livePowerCache = sqliteTable('live_power_cache', {
   nextFetchAt: integer('next_fetch_at').notNull(),
   leaseToken: text('lease_token'),
 });
+
+/**
+ * One-time enrolment codes, stored as SHA-256 hashes. `browser` codes are bound
+ * to the requesting browser's pending cookie and confirmed by Home Assistant;
+ * `link` codes are minted by Home Assistant and redeemed from a link.
+ */
+export const enrolCodes = sqliteTable(
+  'enrol_codes',
+  {
+    codeHash: text('code_hash').primaryKey(),
+    kind: text('kind', { enum: ['browser', 'link'] }).notNull(),
+    browserHash: text('browser_hash'),
+    /** Shown on the enrolling page; Home Assistant's approval must repeat them. */
+    checkDigits: text('check_digits'),
+    clientHash: text('client_hash'),
+    createdAt: integer('created_at').notNull(),
+    expiresAt: integer('expires_at').notNull(),
+    confirmedAt: integer('confirmed_at'),
+    consumedAt: integer('consumed_at'),
+  },
+  (table) => [
+    index('enrol_codes_browser_hash_idx').on(table.browserHash),
+    index('enrol_codes_created_at_idx').on(table.createdAt),
+  ],
+);
+
+/** Rejected confirmations and redemptions, for rate limiting. */
+export const enrolFailures = sqliteTable(
+  'enrol_failures',
+  {
+    id: integer('id').primaryKey({ autoIncrement: true }),
+    at: integer('at').notNull(),
+    kind: text('kind').notNull(),
+    clientHash: text('client_hash'),
+  },
+  (table) => [index('enrol_failures_at_idx').on(table.at)],
+);
