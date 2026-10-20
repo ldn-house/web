@@ -121,6 +121,7 @@ export function EnrolDevice() {
   return (
     <Switch>
       <Match when={state().name === 'idle'}>
+        Live readings are for the household.{' '}
         <button type="button" class={quiet} onClick={enrol}>
           Enrol this device
         </button>
@@ -128,24 +129,29 @@ export function EnrolDevice() {
       <Match when={state().name === 'starting'}>Asking for a code…</Match>
       <Match when={waiting()}>
         {(waiting) => (
-          <>
-            {waiting().reached === false
-              ? 'On the home Wi-Fi, '
-              : 'Asked Home Assistant. If nothing happens, on the home Wi-Fi, '}
-            <a
-              href={waiting().confirmUrl}
-              target="_blank"
-              rel="noopener noreferrer"
-              class={quiet}
-            >
-              ask Home Assistant
-            </a>
-            . Approve it there only if it shows{' '}
-            <strong class="font-medium text-neutral-300 tabular-nums">
-              {waiting().check}
-            </strong>
-            , then come back here.
-          </>
+          <div class="space-y-1">
+            <p>
+              Waiting for the house admin to approve. If they ask, this device is showing{' '}
+              <strong class="font-medium text-neutral-300 tabular-nums">
+                {waiting().check}
+              </strong>
+              .
+            </p>
+            <p>
+              {waiting().reached === false
+                ? 'This browser couldn’t reach Home Assistant. On the home Wi-Fi, '
+                : 'No request? On the home Wi-Fi, '}
+              <a
+                href={waiting().confirmUrl}
+                target="_blank"
+                rel="noopener noreferrer"
+                class={quiet}
+              >
+                send it from this link
+              </a>
+              , then come back here.
+            </p>
+          </div>
         )}
       </Match>
       <Match when={state().name === 'expired'}>

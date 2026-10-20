@@ -154,6 +154,7 @@ describe('home gate', () => {
       expect(body).toContain(String(YESTERDAY_KWH));
       expect(body).toContain('spent yesterday');
       expect(body).toContain('Usage is shown to the end of yesterday.');
+      expect(body).toContain('Live readings are for the household.');
       expect(body).toContain('Enrol this device');
       expect(response.headers.get('Set-Cookie')).toBeNull();
       expect(response.headers.get('Cache-Control')).toBe('private, no-store');
@@ -224,6 +225,7 @@ describe('home gate', () => {
         expect(body).toContain('spent today');
         expect(body).toContain(String(TODAY_KWH));
         expect(body).not.toContain('Usage is shown to the end of yesterday.');
+        expect(body).not.toContain('Enrol this device');
         expect(response.headers.get('Set-Cookie')).toBeNull();
       }
     });
