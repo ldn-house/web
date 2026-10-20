@@ -74,4 +74,15 @@ describe('tree panel', () => {
     );
     expectNoTree(await page('/?as=outsider&at=2027-01-07T00:00:00Z', { host }));
   });
+
+  it('reports the export it was built from at /api/health', async () => {
+    expect(JSON.parse(await page('/api/health'))).toEqual({
+      ok: true,
+      treeExport: treeIndex?.archive ?? null,
+    });
+  });
+
+  it.skipIf(!treeIndex?.archive)('records the archive digest with the export', () => {
+    expect(treeIndex?.archive).toMatch(/^sha256:[0-9a-f]{64}$/);
+  });
 });

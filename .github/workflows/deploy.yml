@@ -5,10 +5,12 @@ on:
     branches: [main]
   pull_request:
     types: [opened, synchronize, reopened, closed]
+  workflow_call:
 
 concurrency:
   group: deploy-${{ github.event.pull_request.number || github.ref }}
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+  queue: ${{ github.event_name == 'pull_request' && 'single' || 'max' }}
 
 env:
   CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
@@ -18,8 +20,15 @@ jobs:
   check:
     if: github.event.action != 'closed'
     runs-on: ubuntu-latest
+    outputs:
+      sha: ${{ steps.head.outputs.sha }}
     steps:
+      # Queued production runs may start out of order, so each tests and deploys main as it is now.
       - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event_name != 'pull_request' && 'main' || '' }}
+      - id: head
+        run: echo "sha=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
       - uses: oven-sh/setup-bun@v2
         with:
           bun-version: "1.3.14"
@@ -108,26 +117,46 @@ jobs:
             "Preview: ${{ steps.deploy.outputs.url }} — seeded from \`src/fixtures/octopus.json\`, isolated database \`ldn-house-pr-${{ github.event.number }}\`."
 
   production:
-    if: github.event_name == 'push'
+    if: github.ref == 'refs/heads/main' && github.event_name != 'pull_request'
     needs: check
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.check.outputs.sha }}
+      # Rerunning failed jobs keeps the commit check tested, which may now be behind.
+      - if: github.run_attempt != '1'
+        run: |
+          git fetch --quiet --depth=1 origin main
+          if [ "$(git rev-parse FETCH_HEAD)" != "$(git rev-parse HEAD)" ]; then
+            echo "::error::main has moved past $(git rev-parse --short HEAD); re-run all jobs instead"
+            exit 1
+          fi
       - uses: oven-sh/setup-bun@v2
         with:
           bun-version: "1.3.14"
       - run: bun install --frozen-lockfile
 
+      # A refresh for the tree export stops here rather than deploying without it.
+      - run: bun scripts/fetch-tree-export.ts ${{ github.event_name == 'push' && '--optional' || '' }}
+
+      # A push deploy may have shipped the same export while this refresh waited.
+      - id: tree
+        if: github.event_name != 'push'
+        run: bun scripts/tree-export-changed.ts --published "$(jq -r .archive src/tree-export/index.json)"
+
       # Migrations run before the deploy, so new code never meets an old schema.
       # Only safe while migrations stay additive; a destructive change needs
       # expand/contract across two deploys.
-      - run: bun run db:migrate:remote
+      - if: steps.tree.outputs.changed != 'false'
+        run: bun run db:migrate:remote
         env:
           CI: "true"
 
-      - run: bun scripts/fetch-tree-export.ts --optional
-      - run: bun run build
-      - run: bunx wrangler deploy
+      - if: steps.tree.outputs.changed != 'false'
+        run: bun run build
+      - if: steps.tree.outputs.changed != 'false'
+        run: bunx wrangler deploy
 
   teardown:
     if: github.event_name == 'pull_request' && github.event.action == 'closed'
