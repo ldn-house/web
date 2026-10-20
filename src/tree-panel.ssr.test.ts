@@ -1,0 +1,77 @@
+import { createExecutionContext, env, waitOnExecutionContext } from 'cloudflare:test';
+import { afterEach, describe, expect, it, vi } from 'vitest';
+import { signHomeCookie } from './lib/home';
+import { treeIndex } from './lib/tree-export';
+import worker from './worker';
+
+const COOKIE_SECRET = 'synthetic-cookie-secret';
+const bindings = { ...env, HOME_COOKIE_SECRET: COOKIE_SECRET } as Env;
+
+const OCTOBER = Date.parse('2026-10-20T12:00:00Z');
+const DECEMBER = Date.parse('2026-12-15T12:00:00Z');
+
+async function page(path: string, init: { host?: string; cookie?: string } = {}) {
+  const { host = 'https://ldn.house', cookie } = init;
+  const headers = new Headers({ 'CF-Connecting-IP': '198.51.100.7' });
+  if (cookie) headers.set('Cookie', cookie);
+  const ctx = createExecutionContext();
+  const response = await worker.fetch(
+    new Request(`${host}${path}`, { headers }) as Request<
+      unknown,
+      IncomingRequestCfProperties
+    >,
+    bindings,
+    ctx,
+  );
+  const body = await response.text();
+  await waitOnExecutionContext(ctx);
+  return body;
+}
+
+/** Anything the panel puts in the page, including what would load its code or data. */
+function expectNoTree(body: string) {
+  expect(body).not.toContain('Christmas tree');
+  expect(body).not.toContain('<circle');
+  expect(body).not.toMatch(/TreePanel|tree-player|\.frames|coords/);
+}
+
+// Without the build-time export the panel renders nothing anywhere, so the
+// cases that expect it only run where src/tree-export/ has been fetched.
+const withExport = it.skipIf(!treeIndex);
+
+describe('tree panel', () => {
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  it('is absent for outsiders out of season', async () => {
+    vi.useFakeTimers({ now: OCTOBER, toFake: ['Date'] });
+    expectNoTree(await page('/'));
+  });
+
+  it('ignores a simulated date on a production host', async () => {
+    vi.useFakeTimers({ now: OCTOBER, toFake: ['Date'] });
+    expectNoTree(await page('/?at=2026-12-15'));
+  });
+
+  withExport('shows outsiders the tree in season', async () => {
+    vi.useFakeTimers({ now: DECEMBER, toFake: ['Date'] });
+    expect(await page('/')).toContain('Christmas tree');
+  });
+
+  withExport('shows the household the tree all year', async () => {
+    vi.useFakeTimers({ now: OCTOBER, toFake: ['Date'] });
+    const cookie = `__Host-ldn-home=${await signHomeCookie(COOKIE_SECRET, Date.now())}`;
+    expect(await page('/', { cookie })).toContain('Christmas tree');
+  });
+
+  withExport('lets local servers simulate the date', async () => {
+    vi.useFakeTimers({ now: OCTOBER, toFake: ['Date'] });
+    const host = 'http://localhost:5173';
+    expectNoTree(await page('/?as=outsider', { host }));
+    expect(await page('/?as=outsider&at=2026-12-15', { host })).toContain(
+      'Christmas tree',
+    );
+    expectNoTree(await page('/?as=outsider&at=2027-01-07T00:00:00Z', { host }));
+  });
+});

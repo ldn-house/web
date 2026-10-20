@@ -5,4 +5,6 @@
   --color-surface: oklch(0.18 0.012 260);
   --color-surface-raised: oklch(0.23 0.014 260);
   --color-accent: oklch(0.78 0.16 85);
+  /* Also the tree player's clear colour, so keep it in sRGB hex. */
+  --color-night: #05070c;
 }

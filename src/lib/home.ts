@@ -170,3 +170,10 @@ export function allowsOverride(url: URL): boolean {
     /^ldn-house-pr-\d+\.[a-z0-9-]+\.workers\.dev$/.test(url.hostname)
   );
 }
+
+/** `?at=2026-12-15` or a full ISO time, where `?as=` is also allowed. */
+export function simulatedNow(url: URL): number | undefined {
+  if (!allowsOverride(url)) return undefined;
+  const at = Date.parse(url.searchParams.get('at') ?? '');
+  return Number.isFinite(at) ? at : undefined;
+}
