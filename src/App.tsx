@@ -1,9 +1,16 @@
 import type { JSX } from '@solidjs/web';
-import { createEffect, createMemo, createSignal, For, onSettled, Show } from 'solid-js';
+import {
+  createEffect,
+  createMemo,
+  createSignal,
+  For,
+  lazy,
+  onSettled,
+  Show,
+} from 'solid-js';
 import { EnrolDevice } from './components/EnrolDevice';
 import { RateChart } from './components/RateChart';
 import type { Window as ChartWindow } from './components/TimeAxis';
-import { TreePanel } from './components/TreePanel';
 import { UsageChart } from './components/UsageChart';
 import { recentDayBounds } from './lib/chart';
 import {
@@ -37,7 +44,11 @@ import {
   telemetryBetween,
   usageRatesBetween,
 } from './lib/queries';
+import { treePanelShown } from './lib/tree-visibility';
 import { startVisibilityPolling } from './lib/visibility-polling';
+
+// Out of season most visitors never render the panel, so its code loads on demand.
+const TreePanel = lazy(() => import('./components/TreePanel'), { export: 'TreePanel' });
 
 function Panel(props: {
   title: string;
@@ -97,6 +108,7 @@ export default function App() {
   // Away from home the server stops usage at the end of yesterday and refuses
   // live readings; this only shapes what the page offers around that.
   const home = createMemo(async () => homeVisitor());
+  const treeShown = createMemo(async () => treePanelShown());
   const period = createMemo(() => Math.floor(Date.parse(now()) / HALF_HOUR_MS));
   const queryWindow = createMemo(() => ({
     from: addLondonDays(today(), -1),
@@ -496,7 +508,9 @@ export default function App() {
         </div>
       </Panel>
 
-      <TreePanel />
+      <Show when={treeShown()}>
+        <TreePanel />
+      </Show>
 
       <Show when={!home()}>
         <footer class="mt-10 text-xs text-neutral-500">

@@ -1,5 +1,6 @@
 import { handleRequest } from 'virtual:solid-ssr-handler';
 import { Hono } from 'hono';
+import { simulatedNow } from './lib/home';
 import {
   browserEnrolmentStatus,
   confirmBrowserEnrolment,
@@ -63,7 +64,8 @@ export default {
     if (pathname === '/enrol') return enrolmentLinkPage(request, env);
 
     const visitor = await resolveVisitor(request, env);
-    const upstream = await withVisitor({ home: visitor.home }, () =>
+    const now = simulatedNow(new URL(request.url));
+    const upstream = await withVisitor({ home: visitor.home, now }, () =>
       isApi ? api.fetch(request, env, ctx) : handleRequest(request),
     );
     // Pages, server functions and the live API all differ between home and away.

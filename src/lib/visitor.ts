@@ -3,6 +3,8 @@ import { AsyncLocalStorage } from 'node:async_hooks';
 export interface Visitor {
   /** In the house, or carrying a cookie issued there. */
   home: boolean;
+  /** A simulated clock for local servers and PR previews; see simulatedNow. */
+  now?: number;
 }
 
 const current = new AsyncLocalStorage<Visitor>();
@@ -18,4 +20,9 @@ export function withVisitor<T>(visitor: Visitor, run: () => T): T {
  */
 export function isHome(): boolean {
   return current.getStore()?.home === true;
+}
+
+/** The request's time, unless a local server or PR preview simulates another. */
+export function visitorNow(): number {
+  return current.getStore()?.now ?? Date.now();
 }
