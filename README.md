@@ -19,10 +19,11 @@ cannot resolve `cloudflare:test`.
 
 ## Deployment
 
-Home Mini readings refresh on demand at most every two minutes. D1 shares the
-reading and the next fetch time across visitors and Worker instances, including
-cooldowns when Octopus throttles requests. The power label shows the measurement
-time; readings older than five minutes give way to the hourly average.
+Home Mini readings refresh on demand at most every two minutes, and only a home
+visitor's request can trigger one. D1 shares the reading and the next fetch time
+across visitors and Worker instances, including cooldowns when Octopus throttles
+requests. The power label shows the measurement time; readings older than five
+minutes give way to the hourly average.
 
 Each refresh uses two telemetry queries, so one deployment makes at most 60 per
 hour. Local servers and other integrations using the same Octopus account share
@@ -62,6 +63,43 @@ additive — a destructive change needs expand/contract across two deploys.
 
 Repository secrets: `CLOUDFLARE_ACCOUNT_ID`, and a `CLOUDFLARE_API_TOKEN` with
 Workers Scripts edit, D1 edit and Workers Routes edit.
+
+## Home access
+
+Live and same-day usage is shown only to enrolled devices, which carry a signed
+cookie valid for 30 days after last use. Everyone else sees usage to the end of
+yesterday.
+
+Worker secrets:
+
+```bash
+bunx wrangler secret put HOME_ASSISTANT_TOKEN       # Home Assistant's bearer token
+bunx wrangler secret put HOME_COOKIE_SECRET         # signs cookies; rotate to revoke them
+bunx wrangler secret put HOME_ASSISTANT_WEBHOOK_URL # http://<HA LAN address>:8123/api/webhook/<id>
+```
+
+A device enrols from home by asking for a code and four check digits, which
+the page sends to the local-only Home Assistant webhook. Once a household phone
+approves the digits shown on ldn.house, Home Assistant confirms both:
+
+```http
+POST /api/home/confirm
+Authorization: Bearer <HOME_ASSISTANT_TOKEN>
+Content-Type: application/json
+
+{"code": "<the webhook's ?code=>", "check": "<the webhook's ?check=>"}
+```
+
+Away from home, Home Assistant mints a one-time link, `{"url": …, "expiresAt": …}`,
+to send to the device:
+
+```http
+POST /api/home/codes
+Authorization: Bearer <HOME_ASSISTANT_TOKEN>
+```
+
+Codes are single-use and expire after ten minutes. Locally and on PR previews,
+`?as=home` and `?as=outsider` set and clear the cookie.
 
 ## Maintenance
 

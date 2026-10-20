@@ -135,12 +135,13 @@ describe('shared live power', () => {
     },
   );
 
-  it('does not contact Octopus when the deployment has no API key', async () => {
+  it('answers without an error and without Octopus when the deployment has no API key', async () => {
     const fetchImpl = vi.fn();
     const response = await livePowerResponse(env.DB, '', {
       fetchImpl: fetchImpl as Fetcher,
     });
-    expect(response.status).toBe(503);
+    expect(response.status).toBe(204);
+    expect(await response.text()).toBe('');
     expect(fetchImpl).not.toHaveBeenCalled();
   });
 

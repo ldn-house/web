@@ -3,9 +3,12 @@
 import { env } from 'cloudflare:workers';
 import { and, asc, desc, eq, gt, gte, isNull, lt, lte, or } from 'drizzle-orm';
 import { drizzle } from 'drizzle-orm/d1';
+import type { SQLiteColumn } from 'drizzle-orm/sqlite-core';
 import * as schema from '../db/schema';
 import { HALF_HOUR_MS, type MeterSlot, type Slot } from './consumption';
 import type { UsageRate } from './cost';
+import { londonMidnight } from './format';
+import { isHome } from './visitor';
 
 export type { Slot } from './consumption';
 
@@ -15,6 +18,21 @@ export interface RateSlot {
 }
 
 const db = () => drizzle(env.DB, { schema });
+
+/**
+ * Away from home, usage ends at the London midnight that began today. These are
+ * server functions, callable with any arguments, so the cut-off is a separate
+ * SQL bound in the stored timestamp format rather than an adjusted argument:
+ * SQLite compares the text, and a caller's `to` need not be canonical.
+ */
+function visibleBefore(column: SQLiteColumn) {
+  return isHome() ? undefined : lt(column, londonMidnight(new Date().toISOString()));
+}
+
+/** Decides what the page offers; the data itself is gated by each query. */
+export async function homeVisitor(): Promise<boolean> {
+  return isHome();
+}
 
 /**
  * Octopus's Flexible product is the price-capped variable tariff. It cannot be
@@ -31,6 +49,7 @@ export async function consumptionBetween(from: string, to: string): Promise<Slot
       and(
         gte(schema.consumption.intervalStart, from),
         lt(schema.consumption.intervalStart, to),
+        visibleBefore(schema.consumption.intervalStart),
       ),
     )
     .orderBy(asc(schema.consumption.intervalStart));
@@ -172,10 +191,17 @@ export async function telemetryBetween(
   to: string,
   now = Date.now(),
 ): Promise<MeterSlot[]> {
+  if (!isHome()) now = Date.now();
   const rows = await db()
     .select({ readAt: schema.telemetry.readAt, wh: schema.telemetry.consumptionWh })
     .from(schema.telemetry)
-    .where(and(gte(schema.telemetry.readAt, from), lt(schema.telemetry.readAt, to)))
+    .where(
+      and(
+        gte(schema.telemetry.readAt, from),
+        lt(schema.telemetry.readAt, to),
+        visibleBefore(schema.telemetry.readAt),
+      ),
+    )
     .orderBy(asc(schema.telemetry.readAt));
 
   return rows.flatMap((row) => {
@@ -195,6 +221,7 @@ export async function telemetryBetween(
 export async function recentAverageDemand(
   now = Date.now(),
 ): Promise<{ through: string; watts: number } | null> {
+  if (!isHome()) return null;
   const rows = await db()
     .select({ readAt: schema.telemetry.readAt, watts: schema.telemetry.demandW })
     .from(schema.telemetry)

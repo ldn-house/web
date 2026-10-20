@@ -37,6 +37,19 @@ describe('spendSince', () => {
     expect(spend.unpriced).toBe(1);
   });
 
+  it('closes a whole day at `until`, counting gaps after the last reading', () => {
+    const spend = spendSince(
+      midnight,
+      [slot(0, 1), slot(30, 2), slot(24 * 60, 9)],
+      [usageRate(0, 20), usageRate(30, 10)],
+      at(24 * 60),
+    );
+    expect(spend.kwh).toBe(3);
+    expect(spend.gbp).toBeCloseTo(0.4);
+    expect(spend.through).toBe(at(60));
+    expect(spend.missing).toBe(46);
+  });
+
   it('has no coverage before the first reading of the day', () => {
     expect(spendSince(midnight, [slot(-30, 1)], [])).toEqual({
       gbp: 0,
