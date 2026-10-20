@@ -399,7 +399,7 @@ export default function App() {
           </Show>
           <Show when={!home()}>
             <p class="mt-3 text-xs text-neutral-500">
-              Usage is shown to the end of yesterday. <EnrolDevice />
+              Usage is shown to the end of yesterday.
             </p>
           </Show>
         </div>
@@ -494,6 +494,12 @@ export default function App() {
           </Show>
         </div>
       </Panel>
+
+      <Show when={!home()}>
+        <footer class="mt-10 text-xs text-neutral-500">
+          <EnrolDevice />
+        </footer>
+      </Show>
     </main>
   );
 }
