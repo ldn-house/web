@@ -77,7 +77,9 @@ jobs:
           exit 1
 
       # A 401 here means the previous deployment, with the old token, is still
-      # answering; the new version can take a little while to propagate.
+      # answering; the new version can take a little while to propagate. A new
+      # preview's hostname can also answer Cloudflare's 404 "error code: 1042"
+      # for a few seconds after the health check passes.
       - name: Seed from the captured fixture
         run: |
           for _ in $(seq 1 20); do
@@ -87,10 +89,12 @@ jobs:
               -H 'Content-Type: application/json' \
               --data-binary @src/fixtures/octopus.json)
             if [ "$status" = "200" ]; then cat seed.out; exit 0; fi
-            if [ "$status" != "401" ]; then echo "seed failed with $status"; cat seed.out; exit 1; fi
+            if [ "$status" != "401" ] && ! { [ "$status" = "404" ] && grep -q 'error code: 1042' seed.out; }; then
+              echo "seed failed with $status"; cat seed.out; exit 1
+            fi
             sleep 3
           done
-          echo "previous deployment still serving after 60s" >&2
+          echo "new deployment not serving the seed route after 60s" >&2
           exit 1
 
       - name: Comment the preview URL
