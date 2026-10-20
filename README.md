@@ -1,8 +1,7 @@
 # ldn.house
 
 Energy and climate data for one house in London. Server-rendered Solid on a
-Cloudflare Worker at [preview.ldn.house](https://preview.ldn.house), with
-[ldn.house](https://ldn.house) prepared as the canonical home.
+Cloudflare Worker at [ldn.house](https://ldn.house).
 
 ## Commands
 
@@ -53,21 +52,20 @@ inside older periods, and cannot repair historical gaps by itself.
 
 A GitHub Actions workflow owns deploys. Workers Builds is disconnected.
 
-**Apex launch is held on [privacy PR #26](https://github.com/ldn-house/web/pull/26).**
-Its security review, non-CGNAT confirmation, Worker secrets and Home Assistant
-setup must be complete, and its merged behavior verified. Keep the launch PR in
-draft; merging to `main` publishes the apex, so draft status alone is not a
-deployment guard. Complete the [launch checklist](docs/apex-launch.md) first.
-Production config binds exactly `ldn.house`, `www.ldn.house` and
-`preview.ldn.house`; `dashboard.ldn.house` remains separate. The Worker redirects
-`www` to HTTPS apex with a 301, preserving path and query, including asset URLs.
-`preview.ldn.house` keeps serving the app. The canonical and social URLs use the
-apex; preview hosts discourage indexing via `robots.txt` and `X-Robots-Tag`.
-These are crawler hints, not access controls or a live-data privacy solution.
-At launch, switch Home Assistant’s report URL from
-`https://preview.ldn.house/api/home/address` to
-`https://ldn.house/api/home/address`; both share the Worker and D1 during transition.
-Home cookies are host-only, so visit the apex from home to obtain its own cookie.
+Merging to `main` publishes the apex; follow the [launch checklist](docs/apex-launch.md)
+for the zone audit, activation and Home Assistant changes. Production config binds
+exactly `ldn.house`, `www.ldn.house` and `preview.ldn.house`;
+`dashboard.ldn.house` remains separate. The Worker redirects `www` to HTTPS apex
+with a 301, preserving path and query, including assets and enrolment GET links.
+`preview.ldn.house` keeps serving the same gated app. The canonical and social URLs
+use the apex; preview hosts discourage indexing via `robots.txt` and `X-Robots-Tag`.
+These are crawler hints, not access controls.
+
+At launch, change Home Assistant's two `rest_command` URLs (`/api/home/confirm`
+and `/api/home/codes`) and its approval notification text to `ldn.house`.
+`HOME_ASSISTANT_WEBHOOK_URL` remains the same LAN address. Re-enrol every device
+on the apex: host-only cookies do not transfer from preview. Devices using both
+hosts need separate enrolment on each; the Worker and D1 remain shared.
 
 | Trigger | Effect |
 |---|---|
