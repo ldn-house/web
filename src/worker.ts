@@ -12,11 +12,12 @@ import {
 import { BACKFILL_FLOOR, ingest } from './lib/ingest';
 import { livePowerResponse } from './lib/live-power';
 import { type OctopusFixture, replayFetcher } from './lib/replay';
+import { treeIndex } from './lib/tree-export';
 import { isHome, withVisitor } from './lib/visitor';
 
 const api = new Hono<{ Bindings: Env }>().basePath('/api');
 
-api.get('/health', (c) => c.json({ ok: true }));
+api.get('/health', (c) => c.json({ ok: true, treeExport: treeIndex?.archive ?? null }));
 
 // Checked before D1 is touched, so only home visitors can cause an Octopus request.
 api.get('/live-power', async (c) =>

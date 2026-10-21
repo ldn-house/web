@@ -11,6 +11,8 @@ export type TreeEffect = {
 export type TreeIndex = {
   format: 1;
   commit: string;
+  /** `sha256:…` of the release archive it was built from. */
+  archive?: string;
   fps: number;
   leds: number;
   /** LEDs with a calibrated position. */

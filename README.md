@@ -72,6 +72,7 @@ hosts need separate enrolment on each; the Worker and D1 remain shared.
 | Pull request | Provisions `ldn-house-pr-N` (Worker and database), migrates, deploys, seeds, comments the URL |
 | Push to `main` | Migrates the production database, then deploys |
 | Pull request closed | Deletes the PR's Worker and database |
+| Hourly, or run manually | Redeploys `main` to production when the tree export has changed |
 
 Draft PRs also deploy previews. The generated config drops all production routes
 and cron triggers, retaining an isolated fixture-seeded database and a
@@ -137,9 +138,11 @@ bun scripts/fetch-tree-export.ts  # tree animations into src/tree-export/
 The Christmas tree panel plays loops pre-rendered by
 [ldn-house/tree](https://github.com/ldn-house/tree) (`export_web.py`), published as
 `tree-effects.tar.gz` on its rolling `firmware-main` release. Deploys fetch the
-latest at build time; a tree-side change reaches the site with the next deploy.
-Without the export, locally or when the download fails, the panel is left out.
-The script also takes a local archive or export directory.
+latest at build time, and `/api/health` reports the archive's digest as
+`treeExport`. The hourly `Tree export` workflow compares that with the release's
+and redeploys when they differ; an export that fails validation is not deployed.
+Without the export, locally or when a push deploy's download fails, the panel is
+left out. The script also takes a local archive or export directory.
 
 `worker-configuration.d.ts` is generated but committed so CI can typecheck
 without Cloudflare credentials. The fixture is a scrubbed capture of the live

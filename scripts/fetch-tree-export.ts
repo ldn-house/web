@@ -49,14 +49,22 @@ async function download(url: string): Promise<Uint8Array> {
   return Buffer.concat(chunks);
 }
 
-/** Returns a reader over the export's files; only names the manifest lists are read. */
-async function open(): Promise<(name: string) => Uint8Array> {
+type Export = {
+  read: (name: string) => Uint8Array;
+  /** The archive's digest, in the form GitHub reports for release assets. */
+  archive?: string;
+};
+
+/** Only names the manifest lists are read. */
+async function open(): Promise<Export> {
   const path = resolve(source);
   if (!/^https?:\/\//.test(source) && lstatSync(path).isDirectory()) {
-    return (name) => {
-      const file = join(path, name);
-      if (!lstatSync(file).isFile()) throw new Error(`${name} is not a regular file`);
-      return readFileSync(file);
+    return {
+      read: (name) => {
+        const file = join(path, name);
+        if (!lstatSync(file).isFile()) throw new Error(`${name} is not a regular file`);
+        return readFileSync(file);
+      },
     };
   }
   const archive = /^https?:\/\//.test(source)
@@ -64,15 +72,18 @@ async function open(): Promise<(name: string) => Uint8Array> {
     : readFileSync(path);
   if (archive.length > MAX_ARCHIVE_BYTES) throw new Error('archive is too large');
   const files = readTar(gunzipSync(archive, { maxOutputLength: MAX_UNPACKED_BYTES }));
-  return (name) => {
-    const file = files.get(name);
-    if (!file) throw new Error(`${name} is missing from the archive`);
-    return file;
+  return {
+    read: (name) => {
+      const file = files.get(name);
+      if (!file) throw new Error(`${name} is missing from the archive`);
+      return file;
+    },
+    archive: `sha256:${createHash('sha256').update(archive).digest('hex')}`,
   };
 }
 
 async function main() {
-  const read = await open();
+  const { read, archive } = await open();
   const manifest = parseManifest(
     JSON.parse(new TextDecoder().decode(read('manifest.json'))),
   );
@@ -106,6 +117,7 @@ async function main() {
   const index: TreeIndex = {
     format: 1,
     commit: manifest.commit,
+    archive,
     fps: manifest.fps,
     leds: manifest.leds,
     placed: manifest.placed,
