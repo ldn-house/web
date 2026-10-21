@@ -44,6 +44,7 @@ jobs:
     needs: check
     runs-on: ubuntu-latest
     permissions:
+      deployments: write
       pull-requests: write
     env:
       SEED_TOKEN: ${{ github.run_id }}-${{ github.run_attempt }}-${{ github.sha }}
@@ -116,6 +117,27 @@ jobs:
           gh pr comment ${{ github.event.number }} --edit-last --create-if-none --body \
             "Preview: ${{ steps.deploy.outputs.url }} — seeded from \`src/fixtures/octopus.json\`, isolated database \`ldn-house-pr-${{ github.event.number }}\`."
 
+      # Recorded against the PR head, not the merge commit, so the pull request
+      # links it. One shared environment avoids an environment per PR, and
+      # auto_inactive stays off so a push to one PR keeps the others' links.
+      - name: Record deployment
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_REPO: ${{ github.repository }}
+          SHA: ${{ github.event.pull_request.head.sha }}
+          PR_NUMBER: ${{ github.event.number }}
+          URL: ${{ steps.deploy.outputs.url }}
+          LOG_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: |
+          id=$(jq -n --arg ref "$SHA" --argjson pr "$PR_NUMBER" '{ref: $ref,
+            environment: "pr-preview", payload: {pr: $pr}, auto_merge: false,
+            required_contexts: [], transient_environment: true,
+            production_environment: false}' |
+            gh api "repos/$GH_REPO/deployments" --input - --jq .id)
+          jq -n --arg url "$URL" --arg log "$LOG_URL" '{state: "success",
+            environment_url: $url, log_url: $log, auto_inactive: false}' |
+            gh api "repos/$GH_REPO/deployments/$id/statuses" --input - --silent
+
   production:
     if: github.ref == 'refs/heads/main' && github.event_name != 'pull_request'
     needs: check
@@ -161,6 +183,9 @@ jobs:
   teardown:
     if: github.event_name == 'pull_request' && github.event.action == 'closed'
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      deployments: write
     steps:
       - uses: actions/checkout@v4
       - uses: oven-sh/setup-bun@v2
@@ -170,3 +195,16 @@ jobs:
       - run: bun scripts/preview/teardown.ts
         env:
           PR_NUMBER: ${{ github.event.number }}
+
+      # The Worker is gone, so its links on the pull request would be dead.
+      - name: Deactivate deployments
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_REPO: ${{ github.repository }}
+          PR_NUMBER: ${{ github.event.number }}
+        run: |
+          gh api --paginate "repos/$GH_REPO/deployments?environment=pr-preview&per_page=100" \
+            --jq ".[] | select(.payload.pr == $PR_NUMBER) | .id" |
+            while read -r id; do
+              gh api "repos/$GH_REPO/deployments/$id/statuses" -f state=inactive --silent
+            done
