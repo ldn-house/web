@@ -1,8 +1,8 @@
 <svg xmlns="http://www.w3.org/2000/svg" width="1200" height="630" viewBox="0 0 1200 630">
   <rect width="1200" height="630" fill="#101218"/>
   <g fill="none" stroke="#e3b341" stroke-width="12" stroke-linecap="round" stroke-linejoin="round">
-    <path d="m850 278 100-90 100 90M880 252v156h140V252"/>
-    <path d="M930 408v-80h40v80" fill="#e3b341" stroke="none"/>
+    <path d="m850 305 100-90 100 90M880 280v135h140V280"/>
+    <path d="M930 415v-80h40v80" fill="#e3b341" stroke="none"/>
   </g>
   <text x="80" y="285" fill="#f5f5f5" font-family="DejaVu Sans, sans-serif" font-size="88" font-weight="600" letter-spacing="-4">ldn.house</text>
   <g fill="#a3a3a3" font-family="DejaVu Sans, sans-serif" font-size="30">
