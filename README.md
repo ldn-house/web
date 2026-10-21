@@ -1,7 +1,7 @@
 # ldn.house
 
 Energy and climate data for one house in London. Server-rendered Solid on a
-Cloudflare Worker, deployed to [ldn.house](https://ldn.house).
+Cloudflare Worker at [ldn.house](https://ldn.house).
 
 ## Commands
 
@@ -52,17 +52,41 @@ inside older periods, and cannot repair historical gaps by itself.
 
 A GitHub Actions workflow owns deploys. Workers Builds is disconnected.
 
+Merging to `main` publishes the apex; follow the [launch checklist](docs/apex-launch.md)
+for the zone audit, activation and Home Assistant changes. Production config binds
+exactly `ldn.house`, `www.ldn.house` and `preview.ldn.house`;
+`dashboard.ldn.house` remains separate. The Worker redirects `www` to HTTPS apex
+with a 301, preserving path and query, including assets and enrolment GET links.
+`preview.ldn.house` keeps serving the same gated app. The canonical and social URLs
+use the apex; preview hosts discourage indexing via `robots.txt` and `X-Robots-Tag`.
+These are crawler hints, not access controls.
+
+At launch, change Home Assistant's two `rest_command` URLs (`/api/home/confirm`
+and `/api/home/codes`) and its approval notification text to `ldn.house`.
+`HOME_ASSISTANT_WEBHOOK_URL` remains the same LAN address. Re-enrol every device
+on the apex: host-only cookies do not transfer from preview. Devices using both
+hosts need separate enrolment on each; the Worker and D1 remain shared.
+
 | Trigger | Effect |
 |---|---|
 | Pull request | Provisions `ldn-house-pr-N` (Worker and database), migrates, deploys, seeds, comments the URL |
 | Push to `main` | Migrates the production database, then deploys |
 | Pull request closed | Deletes the PR's Worker and database |
 
+Draft PRs also deploy previews. The generated config drops all production routes
+and cron triggers, retaining an isolated fixture-seeded database and a
+`workers.dev` URL; the workflow still comments that URL. No Octopus request
+pattern changes: the apex and named preview share the same production Worker,
+D1 cache and refresh gate.
+
 Migrations run before the production deploy, which is only safe while they stay
 additive — a destructive change needs expand/contract across two deploys.
 
 Repository secrets: `CLOUDFLARE_ACCOUNT_ID`, and a `CLOUDFLARE_API_TOKEN` with
 Workers Scripts edit, D1 edit and Workers Routes edit.
+Workers Routes must include the `ldn.house` zone. Custom Domains create their own
+DNS records and certificates; DNS edit is not needed for that operation. See the
+checklist for permission evidence, conflict checks and remaining manual steps.
 
 ## Home access
 

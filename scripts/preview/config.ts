@@ -9,7 +9,7 @@ export function previewNames(pr: string | number) {
 
 /**
  * Routes and cron triggers are dropped: a preview must not answer on
- * preview.ldn.house, and every open PR running the ingest would hammer Octopus.
+ * any production domain, and every open PR running the ingest would hammer Octopus.
  */
 export function previewConfig(
   pr: string | number,
