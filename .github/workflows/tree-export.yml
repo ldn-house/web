@@ -37,6 +37,7 @@ jobs:
     if: needs.detect.outputs.changed == 'true'
     permissions:
       contents: read
+      deployments: write
       pull-requests: write
     uses: ./.github/workflows/deploy.yml
     secrets: inherit
