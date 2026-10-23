@@ -70,9 +70,9 @@ hosts need separate enrolment on each; the Worker and D1 remain shared.
 | Trigger | Effect |
 |---|---|
 | Pull request | Provisions `ldn-house-pr-N` (Worker and database), migrates, deploys, seeds, comments the URL and records a `pr-preview` deployment |
-| Push to `main` | Migrates the production database, then deploys |
+| Push to `main` | Migrates the production database, deploys and records a `production` deployment |
 | Pull request closed | Deletes the PR's Worker and database, and marks its deployments inactive |
-| Hourly, or run manually | Redeploys `main` to production when the tree export has changed |
+| Hourly, or run manually | Redeploys `main` to production when the tree export has changed, recording a `production` deployment |
 
 Draft PRs also deploy previews. The generated config drops all production routes
 and cron triggers, retaining an isolated fixture-seeded database and a
