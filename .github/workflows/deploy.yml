@@ -142,6 +142,9 @@ jobs:
     if: github.ref == 'refs/heads/main' && github.event_name != 'pull_request'
     needs: check
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      deployments: write
     steps:
       - uses: actions/checkout@v7
         with:
@@ -179,6 +182,24 @@ jobs:
         run: bun run build
       - if: steps.tree.outputs.changed != 'false'
         run: bunx wrangler deploy
+
+      # Shows ldn.house under the repository's Deployments, and marks the
+      # previous production deployment inactive.
+      - name: Record deployment
+        if: steps.tree.outputs.changed != 'false'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_REPO: ${{ github.repository }}
+          SHA: ${{ needs.check.outputs.sha }}
+          LOG_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: |
+          id=$(jq -n --arg ref "$SHA" '{ref: $ref, environment: "production",
+            auto_merge: false, required_contexts: [],
+            production_environment: true}' |
+            gh api "repos/$GH_REPO/deployments" --input - --jq .id)
+          jq -n --arg log "$LOG_URL" '{state: "success",
+            environment_url: "https://ldn.house", log_url: $log}' |
+            gh api "repos/$GH_REPO/deployments/$id/statuses" --input - --silent
 
   teardown:
     if: github.event_name == 'pull_request' && github.event.action == 'closed'
