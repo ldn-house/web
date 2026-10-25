@@ -20,11 +20,6 @@
     {
       "pattern": "www.ldn.house",
       "custom_domain": true
-    },
-    {
-      // Keep the old preview hostname bound so the Worker can redirect it.
-      "pattern": "preview.ldn.house",
-      "custom_domain": true
     }
   ],
   "d1_databases": [

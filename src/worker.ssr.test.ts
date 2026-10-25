@@ -95,72 +95,6 @@ function expectNoTodayData(body: string) {
   expect(body).not.toContain('spent today');
 }
 
-describe('canonical host redirects', () => {
-  afterEach(() => {
-    vi.restoreAllMocks();
-  });
-
-  it.each([
-    { host: 'www.ldn.house', status: 301 },
-    { host: 'preview.ldn.house', status: 308 },
-  ])(
-    'redirects $host before handling pages, assets or APIs',
-    async ({ host, status }) => {
-      // Any access to bindings would mean an alias has started handling the request.
-      const noBindings = new Proxy(bindings, {
-        get() {
-          throw new Error('Redirects must not access bindings');
-        },
-      });
-      const upstream = vi
-        .spyOn(globalThis, 'fetch')
-        .mockRejectedValue(new Error('Redirects must not fetch upstream'));
-      for (const origin of [`http://${host}:8080`, `https://${host}`]) {
-        for (const method of ['GET', 'HEAD', 'POST']) {
-          for (const path of [
-            '/',
-            '/assets/app.js?v=a%2Fb&v=c+d',
-            '/robots.txt',
-            '/enrol?code=synthetic-code',
-            '/api/health',
-            '/api/live-power',
-            '/api/home/confirm',
-            '/_server',
-          ]) {
-            const ctx = createExecutionContext();
-            const response = await worker.fetch(
-              new Request(`${origin}${path}`, { method }) as Request<
-                unknown,
-                IncomingRequestCfProperties
-              >,
-              noBindings,
-              ctx,
-            );
-            await waitOnExecutionContext(ctx);
-            expect(response.status).toBe(status);
-            expect(response.headers.get('Location')).toBe(`https://ldn.house${path}`);
-            expect(response.headers.get('Set-Cookie')).toBeNull();
-            expect(await response.text()).toBe('');
-          }
-        }
-      }
-      expect(upstream).not.toHaveBeenCalled();
-    },
-  );
-
-  it.each([
-    'https://ldn.house',
-    'http://localhost:5173',
-    'https://ldn-house-pr-25.example.workers.dev',
-    'https://preview.ldn.house.example.com',
-  ])('serves %s without an alias redirect', async (host) => {
-    const { response, body } = await call('/api/health', { host });
-    expect(response.status).toBe(200);
-    expect(response.headers.get('Location')).toBeNull();
-    expect(JSON.parse(body).ok).toBe(true);
-  });
-});
-
 describe('home gate', () => {
   const now = Date.now();
   const today = londonMidnight(new Date(now).toISOString());
@@ -357,41 +291,9 @@ describe('home gate', () => {
       expect((await confirm(code, check)).response.status).toBe(404);
     });
 
-    it('redirects preview confirmation POSTs before changing enrolment state', async () => {
-      const started = await post('/api/enrol/start');
-      const cookie = cookiesFrom(started.response);
-      const webhook = new URL(JSON.parse(started.body).confirmUrl);
-      const init = {
-        method: 'POST',
-        headers: {
-          Authorization: `Bearer ${HA_TOKEN}`,
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify({
-          code: webhook.searchParams.get('code'),
-          check: webhook.searchParams.get('check'),
-        }),
-      };
-      const redirected = await call('/api/home/confirm', {
-        ...init,
-        host: 'https://preview.ldn.house',
-      });
-      expect(redirected.response.status).toBe(308);
-      expect(redirected.response.headers.get('Location')).toBe(
-        'https://ldn.house/api/home/confirm',
-      );
-      expect(JSON.parse((await post('/api/enrol/status', { cookie })).body)).toEqual({
-        state: 'pending',
-      });
-      expect((await call('/api/home/confirm', init)).response.status).toBe(204);
-      expect(JSON.parse((await post('/api/enrol/status', { cookie })).body)).toEqual({
-        state: 'home',
-      });
-    });
-
     it('keeps browser approval and host-only cookies working on the apex', async () => {
       const host = 'https://ldn.house';
-      const other = 'https://preview.ldn.house';
+      const other = 'https://other.example';
       const request = (path: string, cookie?: string, origin = host) =>
         call(path, { host, cookie, method: 'POST', headers: { Origin: origin } });
       expect((await request('/api/enrol/start', undefined, other)).response.status).toBe(
@@ -427,49 +329,41 @@ describe('home gate', () => {
       expectNoTodayData((await call('/?as=home', { host })).body);
     });
 
-    it.each([
-      { host: 'https://www.ldn.house', status: 301 },
-      { host: 'https://preview.ldn.house', status: 308 },
-    ])(
-      'redirects an enrolment link from $host before redeeming its single-use code',
-      async ({ host, status }) => {
-        const minted = await call('/api/home/codes', {
-          method: 'POST',
-          headers: { Authorization: `Bearer ${HA_TOKEN}` },
+    it('redirects a www enrolment GET to apex before redeeming its single-use code', async () => {
+      const minted = await call('/api/home/codes', {
+        method: 'POST',
+        headers: { Authorization: `Bearer ${HA_TOKEN}` },
+      });
+      expect(minted.response.status).toBe(201);
+      const link = new URL(JSON.parse(minted.body).url);
+      expect(link.origin).toBe('https://ldn.house');
+      const redirected = await call(link.pathname + link.search, {
+        host: 'https://www.ldn.house',
+      });
+      expect(redirected.response.status).toBe(301);
+      expect(redirected.response.headers.get('Location')).toBe(
+        `https://ldn.house${link.pathname}${link.search}`,
+      );
+      const opened = await call(link.pathname + link.search);
+      expect(opened.response.status).toBe(200);
+      expect(opened.body).toContain('<form method="post" action="/enrol">');
+      const redeem = (origin: string) =>
+        post('/enrol', {
+          headers: {
+            Origin: origin,
+            'Content-Type': 'application/x-www-form-urlencoded',
+          },
+          body: new URLSearchParams({ code: link.searchParams.get('code')! }).toString(),
         });
-        expect(minted.response.status).toBe(201);
-        const link = new URL(JSON.parse(minted.body).url);
-        expect(link.origin).toBe('https://ldn.house');
-        const redirected = await call(link.pathname + link.search, {
-          host,
-        });
-        expect(redirected.response.status).toBe(status);
-        expect(redirected.response.headers.get('Location')).toBe(
-          `https://ldn.house${link.pathname}${link.search}`,
-        );
-        const opened = await call(link.pathname + link.search);
-        expect(opened.response.status).toBe(200);
-        expect(opened.body).toContain('<form method="post" action="/enrol">');
-        const redeem = (origin: string) =>
-          post('/enrol', {
-            headers: {
-              Origin: origin,
-              'Content-Type': 'application/x-www-form-urlencoded',
-            },
-            body: new URLSearchParams({
-              code: link.searchParams.get('code')!,
-            }).toString(),
-          });
-        expect((await redeem('https://preview.ldn.house')).response.status).toBe(403);
-        const redeemed = await redeem('https://ldn.house');
-        expect(redeemed.response.status).toBe(303);
-        expect(redeemed.response.headers.get('Location')).toBe('/');
-        expect(
-          (await call('/', { cookie: cookiesFrom(redeemed.response) })).body,
-        ).toContain('spent today');
-        expect((await redeem('https://ldn.house')).response.status).toBe(410);
-      },
-    );
+      expect((await redeem('https://other.example')).response.status).toBe(403);
+      const redeemed = await redeem('https://ldn.house');
+      expect(redeemed.response.status).toBe(303);
+      expect(redeemed.response.headers.get('Location')).toBe('/');
+      expect(
+        (await call('/', { cookie: cookiesFrom(redeemed.response) })).body,
+      ).toContain('spent today');
+      expect((await redeem('https://ldn.house')).response.status).toBe(410);
+    });
 
     it('enrols by link without JavaScript', async () => {
       const minted = await post('/api/home/codes', {

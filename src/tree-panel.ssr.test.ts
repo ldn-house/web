@@ -55,27 +55,24 @@ describe('tree panel', () => {
     expectNoTree(await page('/?as=outsider&at=2026-12-15'));
   });
 
-  it.each([
-    { host: 'https://www.ldn.house', status: 301 },
-    { host: 'https://preview.ldn.house', status: 308 },
-  ])(
-    'preserves simulation queries from $host but ignores them on the apex',
-    async ({ host, status }) => {
-      vi.useFakeTimers({ now: OCTOBER, toFake: ['Date'] });
-      const path = '/?as=home&at=2026-12-15';
-      const ctx = createExecutionContext();
-      const response = await worker.fetch(
-        new Request(`${host}${path}`) as Request<unknown, IncomingRequestCfProperties>,
-        bindings,
-        ctx,
-      );
-      await waitOnExecutionContext(ctx);
-      expect(response.status).toBe(status);
-      expect(response.headers.get('Location')).toBe(`https://ldn.house${path}`);
-      expect(response.headers.get('Set-Cookie')).toBeNull();
-      expectNoTree(await page(path));
-    },
-  );
+  it('preserves simulation queries in the www redirect but ignores them on the apex', async () => {
+    vi.useFakeTimers({ now: OCTOBER, toFake: ['Date'] });
+    const path = '/?as=home&at=2026-12-15';
+    const ctx = createExecutionContext();
+    const response = await worker.fetch(
+      new Request(`https://www.ldn.house${path}`) as Request<
+        unknown,
+        IncomingRequestCfProperties
+      >,
+      bindings,
+      ctx,
+    );
+    await waitOnExecutionContext(ctx);
+    expect(response.status).toBe(301);
+    expect(response.headers.get('Location')).toBe(`https://ldn.house${path}`);
+    expect(response.headers.get('Set-Cookie')).toBeNull();
+    expectNoTree(await page(path));
+  });
 
   withExport(
     'does not hide the seasonal tree through date simulation on the apex',

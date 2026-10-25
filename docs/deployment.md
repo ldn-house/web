@@ -18,12 +18,20 @@ additive — a destructive change needs expand/contract across two deploys.
 
 ## Hosts
 
-Production binds exactly `ldn.house`, `www.ldn.house` and `preview.ldn.house`;
+Production binds exactly `ldn.house` and `www.ldn.house`;
 `dashboard.ldn.house` is separate. The Worker redirects `www` to the HTTPS apex
-with a 301 and `preview.ldn.house` with a 308. Both preserve path and query,
-including assets and enrolment GET links, and run before enrolment, D1 access or
-Octopus requests. The 308 also preserves the method and body of API requests.
-Keep the preview custom domain bound so the Worker can serve its redirect.
+with a 301, preserving path and query, including assets and enrolment GET links.
+
+`preview.ldn.house` is an alias managed outside the app by a Cloudflare Single
+Redirect in the zone's `http_request_dynamic_redirect` ruleset. It matches
+`http.host eq "preview.ldn.house"` and redirects with a 308 to
+`concat("https://ldn.house", http.request.uri.path)`, preserving the query string
+and HTTP method/body. Manage it with `cf rulesets`; it runs before the Worker.
+A standalone proxied `A` record pointing to `192.0.2.1` keeps the hostname
+reachable without a Worker binding. Create the rule and standalone DNS record
+outside Wrangler configuration. When migrating from a Worker custom domain,
+enable the rule first, detach the old custom domain, then create the standalone
+DNS record; Workers-managed DNS cannot coexist with that record.
 
 The app, enrolment forms, canonical URLs and social URLs use the apex. Enrolment
 cookies are host-only, so a device enrolled only on the old preview hostname
