@@ -24,7 +24,7 @@ with a 301, preserving path and query, including assets and enrolment GET links.
 
 `preview.ldn.house` is an alias managed outside the app by a Cloudflare Single
 Redirect in the zone's `http_request_dynamic_redirect` ruleset. It matches
-`http.host eq "preview.ldn.house"` and redirects with a 308 to
+`http.host eq "preview.ldn.house"` and redirects with a temporary 307 to
 `concat("https://ldn.house", http.request.uri.path)`, preserving the query string
 and HTTP method/body. Manage it with `cf rulesets`; it runs before the Worker.
 A standalone proxied `A` record pointing to `192.0.2.1` keeps the hostname
