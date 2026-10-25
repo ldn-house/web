@@ -49,14 +49,11 @@ describe('tree panel', () => {
     expectNoTree(await page('/'));
   });
 
-  it.each(['https://ldn.house', 'https://preview.ldn.house'])(
-    'ignores simulated visitor and date overrides on %s',
-    async (host) => {
-      vi.useFakeTimers({ now: OCTOBER, toFake: ['Date'] });
-      expectNoTree(await page('/?as=home&at=2026-12-15', { host }));
-      expectNoTree(await page('/?as=outsider&at=2026-12-15', { host }));
-    },
-  );
+  it('ignores simulated visitor and date overrides on the apex', async () => {
+    vi.useFakeTimers({ now: OCTOBER, toFake: ['Date'] });
+    expectNoTree(await page('/?as=home&at=2026-12-15'));
+    expectNoTree(await page('/?as=outsider&at=2026-12-15'));
+  });
 
   it('preserves simulation queries in the www redirect but ignores them on the apex', async () => {
     vi.useFakeTimers({ now: OCTOBER, toFake: ['Date'] });
@@ -77,13 +74,11 @@ describe('tree panel', () => {
     expectNoTree(await page(path));
   });
 
-  it.skipIf(!treeIndex).each(['https://ldn.house', 'https://preview.ldn.house'])(
-    'does not hide the seasonal tree through date simulation on %s',
-    async (host) => {
+  withExport(
+    'does not hide the seasonal tree through date simulation on the apex',
+    async () => {
       vi.useFakeTimers({ now: DECEMBER, toFake: ['Date'] });
-      expect(await page('/?as=outsider&at=2026-10-20', { host })).toContain(
-        'Christmas tree',
-      );
+      expect(await page('/?as=outsider&at=2026-10-20')).toContain('Christmas tree');
     },
   );
 

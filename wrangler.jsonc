@@ -20,10 +20,6 @@
     {
       "pattern": "www.ldn.house",
       "custom_domain": true
-    },
-    {
-      "pattern": "preview.ldn.house",
-      "custom_domain": true
     }
   ],
   "d1_databases": [

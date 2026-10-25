@@ -291,59 +291,52 @@ describe('home gate', () => {
       expect((await confirm(code, check)).response.status).toBe(404);
     });
 
-    it.each(['https://ldn.house', 'https://preview.ldn.house'])(
-      'keeps browser approval and host-only cookies working on %s',
-      async (host) => {
-        const other =
-          host === 'https://ldn.house'
-            ? 'https://preview.ldn.house'
-            : 'https://ldn.house';
-        const request = (path: string, cookie?: string, origin = host) =>
-          call(path, { host, cookie, method: 'POST', headers: { Origin: origin } });
-        expect(
-          (await request('/api/enrol/start', undefined, other)).response.status,
-        ).toBe(403);
-        const started = await request('/api/enrol/start');
-        expect(started.response.status).toBe(201);
-        const pendingCookie = cookiesFrom(started.response);
-        const webhook = new URL(JSON.parse(started.body).confirmUrl);
-        expect(webhook.origin + webhook.pathname).toBe(WEBHOOK);
-        // HA can confirm through the apex even when the pending cookie is on preview.
-        expect(
-          (
-            await confirm(
-              webhook.searchParams.get('code')!,
-              webhook.searchParams.get('check')!,
-            )
-          ).response.status,
-        ).toBe(204);
-        expect(
-          (await request('/api/enrol/status', pendingCookie, other)).response.status,
-        ).toBe(403);
-        const claimed = await request('/api/enrol/status', pendingCookie);
-        expect(JSON.parse(claimed.body)).toEqual({ state: 'home' });
-        const header = claimed.response.headers
-          .getSetCookie()
-          .find((value) => value.startsWith('__Host-ldn-home='))!;
-        for (const attribute of ['Path=/', 'Secure', 'HttpOnly', 'SameSite=Lax'])
-          expect(header).toContain(attribute);
-        expect(header).not.toMatch(/Domain=/i);
-        expect(
-          (await call('/', { host, cookie: cookiesFrom(claimed.response) })).body,
-        ).toContain('spent today');
-        expectNoTodayData((await call('/?as=home', { host })).body);
-      },
-    );
+    it('keeps browser approval and host-only cookies working on the apex', async () => {
+      const host = 'https://ldn.house';
+      const other = 'https://other.example';
+      const request = (path: string, cookie?: string, origin = host) =>
+        call(path, { host, cookie, method: 'POST', headers: { Origin: origin } });
+      expect((await request('/api/enrol/start', undefined, other)).response.status).toBe(
+        403,
+      );
+      const started = await request('/api/enrol/start');
+      expect(started.response.status).toBe(201);
+      const pendingCookie = cookiesFrom(started.response);
+      const webhook = new URL(JSON.parse(started.body).confirmUrl);
+      expect(webhook.origin + webhook.pathname).toBe(WEBHOOK);
+      expect(
+        (
+          await confirm(
+            webhook.searchParams.get('code')!,
+            webhook.searchParams.get('check')!,
+          )
+        ).response.status,
+      ).toBe(204);
+      expect(
+        (await request('/api/enrol/status', pendingCookie, other)).response.status,
+      ).toBe(403);
+      const claimed = await request('/api/enrol/status', pendingCookie);
+      expect(JSON.parse(claimed.body)).toEqual({ state: 'home' });
+      const header = claimed.response.headers
+        .getSetCookie()
+        .find((value) => value.startsWith('__Host-ldn-home='))!;
+      for (const attribute of ['Path=/', 'Secure', 'HttpOnly', 'SameSite=Lax'])
+        expect(header).toContain(attribute);
+      expect(header).not.toMatch(/Domain=/i);
+      expect(
+        (await call('/', { host, cookie: cookiesFrom(claimed.response) })).body,
+      ).toContain('spent today');
+      expectNoTodayData((await call('/?as=home', { host })).body);
+    });
 
     it('redirects a www enrolment GET to apex before redeeming its single-use code', async () => {
       const minted = await call('/api/home/codes', {
-        host: 'https://preview.ldn.house',
         method: 'POST',
         headers: { Authorization: `Bearer ${HA_TOKEN}` },
       });
       expect(minted.response.status).toBe(201);
       const link = new URL(JSON.parse(minted.body).url);
-      expect(link.origin).toBe('https://preview.ldn.house');
+      expect(link.origin).toBe('https://ldn.house');
       const redirected = await call(link.pathname + link.search, {
         host: 'https://www.ldn.house',
       });
@@ -362,7 +355,7 @@ describe('home gate', () => {
           },
           body: new URLSearchParams({ code: link.searchParams.get('code')! }).toString(),
         });
-      expect((await redeem('https://preview.ldn.house')).response.status).toBe(403);
+      expect((await redeem('https://other.example')).response.status).toBe(403);
       const redeemed = await redeem('https://ldn.house');
       expect(redeemed.response.status).toBe(303);
       expect(redeemed.response.headers.get('Location')).toBe('/');

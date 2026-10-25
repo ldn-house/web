@@ -130,7 +130,6 @@ describe('helpers', () => {
     expect(allowed('http://127.0.0.1:4173/')).toBe(true);
     expect(allowed('https://ldn-house-pr-25.example.workers.dev/')).toBe(true);
     expect(allowed('https://ldn.house/')).toBe(false);
-    expect(allowed('https://preview.ldn.house/')).toBe(false);
     expect(allowed('https://ldn-house.example.workers.dev/')).toBe(false);
     expect(allowed('https://ldn-house-pr-25.example.workers.dev.attacker.test/')).toBe(
       false,
