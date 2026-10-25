@@ -20,13 +20,16 @@ additive — a destructive change needs expand/contract across two deploys.
 
 Production binds exactly `ldn.house`, `www.ldn.house` and `preview.ldn.house`;
 `dashboard.ldn.house` is separate. The Worker redirects `www` to the HTTPS apex
-with a 301, preserving path and query, including assets and enrolment GET links.
-`preview.ldn.house` serves the same gated app. The canonical and social URLs use
-the apex; preview hosts discourage indexing via `robots.txt` and `X-Robots-Tag`.
-These are crawler hints, not access controls.
+with a 301 and `preview.ldn.house` with a 308. Both preserve path and query,
+including assets and enrolment GET links, and run before enrolment, D1 access or
+Octopus requests. The 308 also preserves the method and body of API requests.
+Keep the preview custom domain bound so the Worker can serve its redirect.
 
-Enrolment cookies are host-only, so a device using both the apex and preview
-enrols on each; the Worker and D1 are shared.
+The app, enrolment forms, canonical URLs and social URLs use the apex. Enrolment
+cookies are host-only, so a device enrolled only on the old preview hostname
+must enrol on the apex. PR previews keep their isolated `workers.dev` URLs and
+discourage indexing via `robots.txt` and `X-Robots-Tag`. These are crawler hints,
+not access controls.
 
 ## Secrets
 

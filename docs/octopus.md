@@ -13,9 +13,11 @@ hour. Local servers and other integrations using the same Octopus account share
 its upstream quota. A throttle uses Octopus's reset time or `Retry-After`, falling
 back to one hour when neither is available.
 
-`ldn.house` and `preview.ldn.house` are served by the same Worker and share its
-D1 cache and refresh gate. PR previews have no cron triggers and are seeded from
-a fixture, so they make no Octopus requests.
+`ldn.house` serves the app using one shared D1 cache and refresh gate.
+`preview.ldn.house` redirects to the apex before touching D1 or Octopus; following
+the redirect uses the same cache and two-minute refresh gate. The redirect adds
+no Octopus requests or changes to refresh timing or throttling. PR previews have
+no cron triggers and are seeded from a fixture, so they make no Octopus requests.
 
 ## Scheduled ingestion
 

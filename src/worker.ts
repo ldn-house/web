@@ -60,12 +60,13 @@ const UNGATED = new Set([
 export default {
   async fetch(request, env, ctx) {
     const url = new URL(request.url);
-    // Exact host only; redirect before enrolment so its form uses the apex origin.
-    if (url.hostname === 'www.ldn.house') {
+    // Exact hosts only; redirect before enrolment so its form uses the apex origin.
+    if (url.hostname === 'www.ldn.house' || url.hostname === 'preview.ldn.house') {
+      const status = url.hostname === 'preview.ldn.house' ? 308 : 301;
       url.protocol = 'https:';
       url.host = 'ldn.house';
       url.port = '';
-      return Response.redirect(url.href, 301);
+      return Response.redirect(url.href, status);
     }
 
     const { pathname } = url;
