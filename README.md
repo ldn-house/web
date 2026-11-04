@@ -10,6 +10,7 @@ bun dev         # Vite dev server, pages rendered in workerd
 bun run build   # client -> dist/client, worker -> dist/ldn_house
 bun run preview # build, then serve the production artifact in workerd
 bun run test    # vitest inside workerd, against a real D1
+bun run test:smoke # build, then load the page in Chromium against fixture data
 bun typecheck
 bun lint
 ```

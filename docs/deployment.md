@@ -16,6 +16,20 @@ and a `workers.dev` URL.
 Migrations run before the production deploy, which is only safe while they stay
 additive — a destructive change needs expand/contract across two deploys.
 
+## Checks
+
+The `check` job gates every pull request and every production deploy:
+typecheck, lint, the Vitest suites, a build, then a browser smoke test
+(`bun run test:smoke` locally). The smoke test serves the built artifact with
+`wrangler dev` against a fresh local database seeded from
+`src/fixtures/octopus.json`, moved forward so its last day of readings is
+yesterday, and loads the page in Chromium as an outsider and as the household.
+It fails on page errors, console errors, failed requests, any request leaving
+the local server, or the panels not rendering and hydrating. The server reads
+only a generated env file, never `.dev.vars`, so it has no Octopus or Home
+Assistant credentials and makes no requests to either. Failed runs upload
+Playwright traces as the `playwright-traces` artifact.
+
 ## Hosts
 
 Production binds exactly `ldn.house` and `www.ldn.house`;
