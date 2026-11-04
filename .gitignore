@@ -7,3 +7,5 @@ wrangler.preview.json
 .DS_Store
 /src/tree-export/
 /src/tree-export.tmp/
+/test-results/
+/playwright-report/

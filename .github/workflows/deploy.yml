@@ -39,6 +39,19 @@ jobs:
       - run: bun run test
       - run: bun run build
 
+      # Loads the artifact just built in Chromium, against a local fixture-seeded
+      # database; see e2e/app.smoke.ts. Part of `check`, so it gates merges and
+      # production deploys alike.
+      - run: bunx playwright install --with-deps --only-shell chromium
+      - run: bunx playwright test
+      - if: failure()
+        uses: actions/upload-artifact@v7
+        with:
+          name: playwright-traces
+          path: test-results/
+          retention-days: 7
+          if-no-files-found: ignore
+
   preview:
     if: github.event_name == 'pull_request' && github.event.action != 'closed'
     needs: check
