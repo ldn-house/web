@@ -1,0 +1,15 @@
+# Development tools for this repository. scripts/setup.sh installs them; CI
+# installs them with jdx/mise-action. Bun is pinned by `packageManager` in
+# package.json, which mise reads below.
+min_version = "2026.10.17"
+
+[settings]
+idiomatic_version_file_enable_tools = ["bun"]
+
+[tools]
+# Bun runs package binaries such as tsc, vite and wrangler with Node when it
+# is on PATH, following their `#!/usr/bin/env node` shebangs.
+node = "26.13.0"
+# Used by the deploy workflow's steps.
+gh = "2.103.3"
+jq = "1.8.2"

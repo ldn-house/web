@@ -3,6 +3,25 @@
 Energy and climate data for one house in London. Server-rendered Solid on a
 Cloudflare Worker at [ldn.house](https://ldn.house).
 
+## Setup
+
+```bash
+scripts/setup.sh # or `bun run setup`
+```
+
+[mise](https://mise.jdx.dev/getting-started.html) installs the toolchain CI
+uses: Bun from `packageManager` in `package.json`, and Node, `gh` and `jq` from
+`mise.toml`. Node is pinned because Bun runs package binaries such as `tsc`,
+`vite` and `wrangler` under whatever Node is on PATH. To change a version, edit
+`packageManager` or `mise.toml`.
+
+The setup script trusts `mise.toml`, installs the pinned tools, installs
+dependencies, and, in a linked worktree, copies `.dev.vars` from the main
+clone. It is safe to re-run. Without mise it warns and carries on with the
+tools on PATH, but stops if that Bun differs from the pin. Activate mise in
+your shell, or prefix commands with `mise exec --`, so later commands use the
+pinned tools too.
+
 ## Commands
 
 ```bash
