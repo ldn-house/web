@@ -5,6 +5,10 @@ Cloudflare Worker at [ldn.house](https://ldn.house).
 
 ## Commands
 
+Run `scripts/setup.sh` in a fresh clone or worktree. It installs the toolchain
+pinned in `mise.toml` and `packageManager` with [mise](https://mise.jdx.dev/),
+then dependencies.
+
 ```bash
 bun dev         # Vite dev server, pages rendered in workerd
 bun run build   # client -> dist/client, worker -> dist/ldn_house

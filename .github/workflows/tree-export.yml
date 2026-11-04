@@ -18,9 +18,7 @@ jobs:
       changed: ${{ steps.validate.outcome == 'success' }}
     steps:
       - uses: actions/checkout@v7
-      - uses: oven-sh/setup-bun@v2
-        with:
-          bun-version: "1.4.4"
+      - uses: jdx/mise-action@v5
       - run: bun install --frozen-lockfile
       - id: compare
         run: bun scripts/tree-export-changed.ts
