@@ -102,7 +102,7 @@ describe('discoverAccountNumber', () => {
         ? { data: { obtainKrakenToken: { token: 't' } } }
         : { data: { viewer: { accounts: [account, { number: 'A-SYNTH02' }] } } },
     );
-    expect(discoverAccountNumber(KEY, fetch)).rejects.toThrow('found 2');
+    await expect(discoverAccountNumber(KEY, fetch)).rejects.toThrow('found 2');
   });
 });
 
