@@ -9,7 +9,7 @@ idiomatic_version_file_enable_tools = ["bun"]
 [tools]
 # Bun runs package binaries such as tsc, vite and wrangler with Node when it
 # is on PATH, following their `#!/usr/bin/env node` shebangs.
-node = "26.13.0"
+node = "26.13.1"
 # Used by the deploy workflow's steps.
 gh = "2.103.3"
 jq = "1.8.2"
