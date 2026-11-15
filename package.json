@@ -23,7 +23,7 @@
   "dependencies": {
     "@solidjs/web": "^2.0.0-rc.3",
     "drizzle-orm": "^0.45.2",
-    "hono": "^4.13.5",
+    "hono": "^4.13.18",
     "solid-js": "^2.0.0-rc.3"
   },
   "devDependencies": {
