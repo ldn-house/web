@@ -1,5 +1,5 @@
 import { env } from 'cloudflare:test';
-import { beforeEach, describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { ENROL_TTL_S, readCookie, signHomeCookie } from './home';
 import {
   browserEnrolmentStatus,
@@ -14,7 +14,7 @@ const NOW = Date.parse('2026-10-19T12:00:00Z');
 const ORIGIN = 'https://ldn.house';
 const TOKEN = 'synthetic-ha-token';
 const SECRET = 'synthetic-cookie-secret';
-const WEBHOOK = 'http://192.0.2.20:8123/api/webhook/synthetic-webhook-id';
+const WEBHOOK = 'https://ha.example/api/webhook/synthetic-webhook-id';
 const homeEnv = {
   DB: env.DB,
   HOME_ASSISTANT_TOKEN: TOKEN,
@@ -76,9 +76,29 @@ function browser(ip = '198.51.100.7') {
 /** The digits each code was issued with, as Home Assistant would pass them back. */
 const checks = new Map<string, string>();
 
+/** Each POST the Worker sent to Home Assistant's webhook. */
+let webhookCalls: URL[] = [];
+
+beforeEach(() => {
+  webhookCalls = [];
+  vi.spyOn(globalThis, 'fetch').mockImplementation(async (input, init) => {
+    const url = new URL(input instanceof Request ? input.url : String(input));
+    expect(init?.method ?? (input instanceof Request ? input.method : 'GET')).toBe(
+      'POST',
+    );
+    webhookCalls.push(url);
+    return new Response(null, { status: 200 });
+  });
+});
+
+afterEach(() => {
+  vi.restoreAllMocks();
+});
+
+/** The code Home Assistant received for the enrolment just started. */
 const codeFrom = async (response: Response) => {
-  const { confirmUrl } = (await response.json()) as { confirmUrl: string };
-  const url = new URL(confirmUrl);
+  expect(response.status).toBe(201);
+  const url = webhookCalls.at(-1)!;
   const code = url.searchParams.get('code')!;
   checks.set(code, url.searchParams.get('check')!);
   return code;
@@ -121,14 +141,14 @@ describe('enrolment from home', () => {
     const phone = browser();
     const started = await phone.start();
     expect(started.status).toBe(201);
-    const { confirmUrl: url, check } = (await started.clone().json()) as {
-      confirmUrl: string;
-      check: string;
-    };
-    const confirmUrl = new URL(url);
-    expect(`${confirmUrl.origin}${confirmUrl.pathname}`).toBe(WEBHOOK);
-    expect(check).toMatch(/^\d{4}$/);
-    expect(confirmUrl.searchParams.get('check')).toBe(check);
+    const body = (await started.clone().json()) as Record<string, unknown>;
+    // The browser learns only its check digits, never the webhook.
+    expect(Object.keys(body)).toEqual(['check']);
+    expect(body.check).toMatch(/^\d{4}$/);
+    expect(webhookCalls).toHaveLength(1);
+    const sent = webhookCalls[0]!;
+    expect(`${sent.origin}${sent.pathname}`).toBe(WEBHOOK);
+    expect(sent.searchParams.get('check')).toBe(body.check);
     expect(started.headers.get('Set-Cookie')).toMatch(
       /^__Host-ldn-enrol=v1\.[\w-]{22}\.\d+\.[\w-]{43}; Max-Age=600; Path=\/; HttpOnly; Secure; SameSite=Lax$/,
     );
@@ -315,6 +335,19 @@ describe('enrolment from home', () => {
       );
       expect(response.status).toBe(503);
     }
+  });
+
+  it('sets no cookie when Home Assistant cannot be reached', async () => {
+    const phone = browser();
+    vi.mocked(fetch).mockRejectedValueOnce(new Error('offline'));
+    const offline = await phone.start();
+    expect(offline.status).toBe(502);
+    expect(offline.headers.get('Set-Cookie')).toBeNull();
+    vi.mocked(fetch).mockResolvedValueOnce(new Response(null, { status: 503 }));
+    expect((await phone.start()).status).toBe(502);
+    expect(phone.jar.size).toBe(0);
+    // A working webhook still enrols.
+    expect((await confirm(await codeFrom(await phone.start()))).status).toBe(204);
   });
 
   it('holds the quotas under concurrent requests', async () => {

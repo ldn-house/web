@@ -131,6 +131,27 @@ function webhookUrl(env: HomeEnv, code: string, check = ''): string | null {
   }
 }
 
+/** How long to wait for Home Assistant to accept an enrolment request. */
+const WEBHOOK_TIMEOUT_MS = 5_000;
+
+/**
+ * Home Assistant's webhook, which asks a household phone to approve the check
+ * digits. The Worker calls it, so the device enrolling can be anywhere and
+ * never learns the webhook's address.
+ */
+async function notifyHomeAssistant(url: string): Promise<boolean> {
+  try {
+    const response = await fetch(url, {
+      method: 'POST',
+      signal: AbortSignal.timeout(WEBHOOK_TIMEOUT_MS),
+    });
+    await response.body?.cancel();
+    return response.ok;
+  } catch {
+    return false;
+  }
+}
+
 /** `POST /api/enrol/start`: a code for Home Assistant, bound to this browser. */
 export async function startBrowserEnrolment(
   request: Request,
@@ -146,7 +167,10 @@ export async function startBrowserEnrolment(
   const started = await startEnrolment(env.DB, client, now);
   if (isLimited(started)) return tooMany(started);
   const { code, check } = started;
-  return json({ confirmUrl: webhookUrl(env, code, check), check }, 201, {
+  if (!(await notifyHomeAssistant(webhookUrl(env, code, check)!))) {
+    return json({ error: 'home assistant unreachable' }, 502);
+  }
+  return json({ check }, 201, {
     'Set-Cookie': enrolCookieHeader(await signEnrolCookie(secret, started.nonce, now)),
   });
 }
@@ -176,7 +200,7 @@ export async function browserEnrolmentStatus(
   return json({ state }, 200, headers);
 }
 
-/** `POST /api/home/confirm` from Home Assistant's local-only webhook, after approval. */
+/** `POST /api/home/confirm` from Home Assistant, once a household phone approves. */
 export async function confirmBrowserEnrolment(
   request: Request,
   env: HomeEnv,

@@ -7,7 +7,7 @@ import worker from './worker';
 
 const IP = '198.51.100.7';
 const HA_TOKEN = 'synthetic-ha-token';
-const WEBHOOK = 'http://192.0.2.20:8123/api/webhook/synthetic-webhook-id';
+const WEBHOOK = 'https://ha.example/api/webhook/synthetic-webhook-id';
 const COOKIE_SECRET = 'synthetic-cookie-secret';
 const HH = 30 * 60_000;
 const iso = (ms: number) => new Date(ms).toISOString().replace(/\.\d{3}Z$/, 'Z');
@@ -270,12 +270,15 @@ describe('home gate', () => {
       });
 
     it('turns an outsider into a home visitor once Home Assistant confirms', async () => {
+      const webhook = vi.spyOn(globalThis, 'fetch').mockResolvedValue(new Response(null));
       const started = await post('/api/enrol/start');
       expect(started.response.status).toBe(201);
       let cookie = cookiesFrom(started.response);
-      const confirmUrl = new URL(JSON.parse(started.body).confirmUrl);
-      const code = confirmUrl.searchParams.get('code')!;
-      const check = confirmUrl.searchParams.get('check')!;
+      const sent = new URL(String(webhook.mock.calls[0]![0]));
+      expect(sent.origin + sent.pathname).toBe(WEBHOOK);
+      const code = sent.searchParams.get('code')!;
+      const check = sent.searchParams.get('check')!;
+      expect(JSON.parse(started.body)).toEqual({ check });
 
       expect(JSON.parse((await post('/api/enrol/status', { cookie })).body)).toEqual({
         state: 'pending',
@@ -299,10 +302,11 @@ describe('home gate', () => {
       expect((await request('/api/enrol/start', undefined, other)).response.status).toBe(
         403,
       );
+      const sent = vi.spyOn(globalThis, 'fetch').mockResolvedValue(new Response(null));
       const started = await request('/api/enrol/start');
       expect(started.response.status).toBe(201);
       const pendingCookie = cookiesFrom(started.response);
-      const webhook = new URL(JSON.parse(started.body).confirmUrl);
+      const webhook = new URL(String(sent.mock.calls[0]![0]));
       expect(webhook.origin + webhook.pathname).toBe(WEBHOOK);
       expect(
         (
