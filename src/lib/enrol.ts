@@ -62,8 +62,8 @@ const limited = (): Limited => ({ limited: true, retryAfter: WINDOW_MS / 1000 })
 
 /**
  * Four digits the page shows and Home Assistant's approval request repeats, so
- * whoever approves can match it to the device in front of them. Anyone could
- * relay another browser's webhook URL, so approval is what binds the two.
+ * whoever approves can match it to the device in front of them. Anyone, from
+ * anywhere, can ask for an approval request, so approval is what binds the two.
  */
 function checkDigits(): string {
   return String(crypto.getRandomValues(new Uint32Array(1))[0]! % 10_000).padStart(4, '0');

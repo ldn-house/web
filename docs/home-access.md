@@ -9,12 +9,16 @@ Worker secrets:
 ```bash
 bunx wrangler secret put HOME_ASSISTANT_TOKEN       # Home Assistant's bearer token
 bunx wrangler secret put HOME_COOKIE_SECRET         # signs cookies; rotate to revoke them
-bunx wrangler secret put HOME_ASSISTANT_WEBHOOK_URL # http://<HA LAN address>:8123/api/webhook/<id>
+bunx wrangler secret put HOME_ASSISTANT_WEBHOOK_URL # https://<HA external host>/api/webhook/<id>
 ```
 
-A device enrols from home by asking for a code and four check digits, which
-the page sends to the local-only Home Assistant webhook. Once a household phone
-approves the digits shown on ldn.house, Home Assistant confirms both:
+A device enrols from anywhere by asking for a code and four check digits. The
+Worker POSTs both to the webhook as `?code=` and `?check=`, so the webhook must
+be reachable from the internet: set `local_only: false` on its trigger. The
+browser never sees the webhook's address. If the webhook does not answer with a
+2xx within five seconds, the page says it couldn't reach Home Assistant and no
+code is handed out. Once a household phone approves the digits shown on
+ldn.house, Home Assistant confirms both:
 
 ```http
 POST /api/home/confirm
@@ -24,7 +28,7 @@ Content-Type: application/json
 {"code": "<the webhook's ?code=>", "check": "<the webhook's ?check=>"}
 ```
 
-Away from home, Home Assistant mints a one-time link, `{"url": …, "expiresAt": …}`,
+Home Assistant can also mint a one-time link, `{"url": …, "expiresAt": …}`,
 to send to the device:
 
 ```http

@@ -3,7 +3,7 @@ import { createSignal, Match, onCleanup, Switch } from 'solid-js';
 type State =
   | { name: 'idle' }
   | { name: 'starting' }
-  | { name: 'waiting'; confirmUrl: string; check: string; reached: boolean | null }
+  | { name: 'waiting'; check: string }
   | { name: 'expired' }
   | { name: 'unavailable' }
   | { name: 'failed'; message: string };
@@ -15,9 +15,9 @@ const quiet =
   'underline decoration-neutral-600 underline-offset-2 hover:text-neutral-300';
 
 /**
- * Asks the Worker for a code bound to this browser, then hands it to Home
- * Assistant on the LAN. Chromium can send it directly once Local Network
- * Access is allowed; elsewhere, or if that fails, the link opens it instead.
+ * Asks the Worker for a code bound to this browser. The Worker passes it to
+ * Home Assistant, which asks a household phone to approve the check digits
+ * shown here, then this browser polls until it is approved.
  */
 export function EnrolDevice() {
   const [state, setState] = createSignal<State>({ name: 'idle' });
@@ -68,16 +68,17 @@ export function EnrolDevice() {
       return setState({
         name: 'failed',
         message:
-          response?.status === 429 ? 'Too many attempts.' : 'Could not start enrolment.',
+          response?.status === 429
+            ? 'Too many attempts.'
+            : response?.status === 502
+              ? 'Couldn’t reach Home Assistant.'
+              : 'Could not start enrolment.',
       });
     }
-    const { confirmUrl, check } = (await response.json()) as {
-      confirmUrl: string;
-      check: string;
-    };
-    setState({ name: 'waiting', confirmUrl, check, reached: null });
+    const { check } = (await response.json()) as { check: string };
+    setState({ name: 'waiting', check });
     pollUntil = Date.now() + POLL_FOR_MS;
-    // Returning from Home Assistant's tab checks straight away.
+    // Returning to the tab after approving on the same phone checks straight away.
     stopPolling();
     window.addEventListener('focus', recheck);
     document.addEventListener('visibilitychange', recheck);
@@ -86,22 +87,6 @@ export function EnrolDevice() {
       document.removeEventListener('visibilitychange', recheck);
     };
     poll();
-    try {
-      // Chromium prompts for Local Network Access and then allows plain HTTP
-      // to the LAN; other browsers reject this as mixed content.
-      await fetch(confirmUrl, {
-        method: 'POST',
-        mode: 'no-cors',
-        targetAddressSpace: 'local',
-      } as RequestInit);
-      setState((current) =>
-        current.name === 'waiting' ? { ...current, reached: true } : current,
-      );
-    } catch {
-      setState((current) =>
-        current.name === 'waiting' ? { ...current, reached: false } : current,
-      );
-    }
   }
 
   const waiting = () => {
@@ -129,29 +114,13 @@ export function EnrolDevice() {
       <Match when={state().name === 'starting'}>Asking for a code…</Match>
       <Match when={waiting()}>
         {(waiting) => (
-          <div class="space-y-1">
-            <p>
-              Waiting for the house admin to approve. If they ask, this device is showing{' '}
-              <strong class="font-medium text-neutral-300 tabular-nums">
-                {waiting().check}
-              </strong>
-              .
-            </p>
-            <p>
-              {waiting().reached === false
-                ? 'This browser couldn’t reach Home Assistant. On the home Wi-Fi, '
-                : 'No request? On the home Wi-Fi, '}
-              <a
-                href={waiting().confirmUrl}
-                target="_blank"
-                rel="noopener noreferrer"
-                class={quiet}
-              >
-                send it from this link
-              </a>
-              , then come back here.
-            </p>
-          </div>
+          <p>
+            Waiting for the house admin to approve. If they ask, this device is showing{' '}
+            <strong class="font-medium text-neutral-300 tabular-nums">
+              {waiting().check}
+            </strong>
+            .
+          </p>
         )}
       </Match>
       <Match when={state().name === 'expired'}>
