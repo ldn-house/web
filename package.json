@@ -30,7 +30,7 @@
     "@biomejs/biome": "^2.5.11",
     "@cloudflare/vite-plugin": "^1.69.1",
     "@cloudflare/vitest-plugin": "^1.8.1",
-    "@playwright/test": "^1.65.0",
+    "@playwright/test": "^1.65.1",
     "@solidjs/vite-plugin": "^3.0.0-next.34",
     "@tailwindcss/vite": "^4.3.5",
     "drizzle-kit": "^0.31.10",
