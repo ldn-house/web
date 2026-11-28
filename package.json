@@ -27,7 +27,7 @@
     "solid-js": "^2.0.0-rc.3"
   },
   "devDependencies": {
-    "@biomejs/biome": "^2.5.11",
+    "@biomejs/biome": "^2.6.9",
     "@cloudflare/vite-plugin": "^1.70.1",
     "@cloudflare/vitest-plugin": "^1.9.2",
     "@playwright/test": "^1.65.1",
